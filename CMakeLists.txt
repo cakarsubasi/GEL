@@ -98,6 +98,13 @@ else ()
     target_link_libraries(PyGEL PRIVATE GEL)
 endif ()
 
+# Enable link time optimization
+include(CheckIPOSupported)
+check_ipo_supported(RESULT result)
+if(result)
+    set_target_properties(GEL PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
 # Install GEL library
 install(TARGETS GEL LIBRARY DESTINATION lib)
 
