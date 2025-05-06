@@ -67,8 +67,6 @@ void remove_duplicate_vertices(
                 isInsert = false;
                 removed++;
                 break;
-            } else {
-                break;
             }
         }
 
@@ -82,25 +80,6 @@ void remove_duplicate_vertices(
     std::cout << removed << " duplicate vertices removed." << std::endl;
     vertices = new_vertices;
     normals = new_normals;
-}
-
-/**
-    * @brief Clamp the value between the upper and lower bound
-    *
-    * @param value: the value to be clamped
-    * @param upper_bound: upper bound
-    * @param lower_bound: lower bound
-    *
-    * @return clamped value
-    */
-double clamp(const double value, const double upper_bound, const double lower_bound)
-{
-    double output = value;
-    if (output > upper_bound)
-        output = upper_bound;
-    if (output < lower_bound)
-        output = lower_bound;
-    return output;
 }
 
 /**
@@ -144,8 +123,8 @@ double cal_radians_3d(const Vector& branch, const Vector& normal)
 
     const Vector proj_ref = ref_vec - dot(normal, ref_vec) /
         normal.length() * normal;
-    const auto value = clamp(dot(proj_vec, proj_ref) / proj_vec.length() /
-                             proj_ref.length(), 1, -1);
+    const auto value = std::clamp<double>(dot(proj_vec, proj_ref) / proj_vec.length() /
+                             proj_ref.length(), -1, 1);
     double radian = std::acos(value);
     if (dot(cross(proj_vec, proj_ref), normal) > 0)
         radian = 2 * M_PI - radian;
@@ -177,9 +156,9 @@ double cal_radians_3d(const Vector& branch_vec, const Vector& normal, const Vect
 
     const Vector proj_ref = ref_vec - dot(normal, ref_vec) /
         normal.length() * normal;
-    const auto value = clamp(
+    const auto value = std::clamp<double>(
         dot(proj_vec, proj_ref) / proj_vec.length() /
-        proj_ref.length(), 1, -1);
+        proj_ref.length(), -1, 1);
     double radian = std::acos(value);
     if (dot(CGLA::cross(proj_vec, proj_ref), normal) > 0)
         radian = 2 * M_PI - radian;
@@ -743,35 +722,6 @@ void estimate_normal_no_normals(const std::vector<Point>& vertices, const Tree& 
 }
 
 /**
-    * @brief Add noise to the normal
-    *
-    * @param angle: the maximum angle the normal can pivot compared to the original direction
-    * @param normals: normals exposed to noise
-    *
-    * @return None
-    */
-void add_normal_noise(float angle, std::vector<Vector>& normals)
-{
-    const int seed = 3;
-    std::mt19937 mt;
-    mt.seed(seed);
-
-    std::uniform_real_distribution<double> uniform_distribution(0., M_PI);
-
-    for (auto& normal : normals) {
-        Vector ref1 = calculate_ref_vec(normal);
-        Vector ref2 = CGLA::cross(normal, ref1);
-        ref2 /= ref2.length();
-        const auto phi = 2.0 * uniform_distribution(mt);
-
-        Vector plane_vec = std::cos(phi) * ref1 + std::sin(phi) * ref2;
-        plane_vec /= plane_vec.length();
-        normal = std::cos(angle) * normal + std::sin(angle) * plane_vec;
-        normal /= normal.length();
-    }
-}
-
-/**
     * @brief Calculate cos angle weight for correcting normal orientation
     *
     * @param this_normal: normal of current vertex
@@ -782,7 +732,7 @@ void add_normal_noise(float angle, std::vector<Vector>& normals)
 float cal_angle_based_weight(const Vector& this_normal, const Vector& neighbor_normal)
 {
     float dot_pdt = std::abs(CGLA::dot(this_normal, neighbor_normal) / this_normal.length() / neighbor_normal.length());
-    dot_pdt = clamp(dot_pdt, 1., 0.);
+    dot_pdt = std::clamp<float>(dot_pdt, 0., 1.0);
     if (1. - dot_pdt < 0)
         std::cout << "error" << std::endl;
     return 1. - dot_pdt;
@@ -1354,17 +1304,17 @@ bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle)
         float len_wi = (p3 - p2).length();
         float len_uw = (p1 - p3).length();
 
-        float max_value = std::acos(clamp(
+        float max_value = std::acos(std::clamp<double>(
             dot((p3 - p2), (p1 - p2)) / len_ui /
-            len_wi, 1, -1));
-        float radian = std::acos(clamp(
+            len_wi, -1, 1));
+        float radian = std::acos(std::clamp<double>(
             dot((p2 - p1), (p3 - p1)) / len_ui /
-            len_uw, 1, -1));
+            len_uw, -1, 1));
         if (radian > max_value)
             max_value = radian;
-        radian = std::acos(clamp(
+        radian = std::acos(std::clamp<double>(
             dot((p1 - p3), (p2 - p3)) / len_uw /
-            len_wi, 1, -1));
+            len_wi, -1, 1));
         if (radian > max_value)
             max_value = radian;
         if (max_value > 175. / 180. * M_PI)
