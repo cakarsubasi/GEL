@@ -59,12 +59,14 @@ using namespace Concepts;
 template <typename F,
           typename InputIt,
           bool BoundsChecking = true>
-auto parallel_foreach(ThreadPool& pool, F f, const InputIt& it) -> void
+auto parallel_foreach(ThreadPool& pool, F&& f, const InputIt& it) -> void
 {
     const auto pool_size = pool.size();
     const auto work_size = it.size();
-    const auto reduced_size = work_size / pool_size;
-
+    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    if (work_size == 0) {
+        return;
+    }
     for (auto i = 0; i < pool_size; ++i)
     {
         pool.addTask([i, reduced_size, work_size, &it, &f]
@@ -106,14 +108,17 @@ template <typename F,
     UnaryFunction<F, typename InputIt::value_type, typename OutputIt::value_type>
 auto parallel_map(
     ThreadPool& pool,
-    const F& f,
+    F&& f,
     const InputIt& it,
     OutputIt&& out = std::vector<typename OutputIt::value_type>()
-) -> std::remove_reference_t<decltype(out)>
+) -> decltype(out)
 {
     const auto pool_size = pool.size();
     const auto work_size = it.size();
-    const auto reduced_size = work_size / pool_size;
+    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    if (work_size == 0) {
+        return std::forward<OutputIt>(out);
+    }
     if (out.size() != work_size)
     {
         out.reserve(work_size);
@@ -139,7 +144,7 @@ auto parallel_map(
         });
     }
     pool.waitAll();
-    return out;
+    return std::forward<OutputIt>(out);
 }
 
 } // namespace GEL::Util

@@ -67,7 +67,8 @@ public:
                         m_function_queue.pop();
                     }
                     // TODO: exception handling to prevent a thread from going down
-                    task();
+                    std::invoke(task);
+                    //task();
                     m_number_working.fetch_sub(1, std::memory_order_release);
                     m_number_working_condition.notify_one();
                 }
