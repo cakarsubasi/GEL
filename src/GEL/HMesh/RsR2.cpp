@@ -51,8 +51,8 @@ void remove_duplicate_vertices(
 
         bool isInsert = true;
         for (int i = 0; i < neighbors.size(); i++) {
-            NodeID idx = neighbors[i];
-            double length = neighbor_distance[i];
+            const NodeID idx = neighbors[i];
+            const double length = neighbor_distance[i];
 
             if (this_idx == idx)
                 continue;
@@ -105,47 +105,44 @@ double clamp(const double value, const double upper_bound, const double lower_bo
     *
     * @return None
     */
-void calculate_ref_vec(const Vector& normal, Vector& ref_vec) {
+Vector calculate_ref_vec(const Vector& normal) {
     constexpr float eps = 1e-6;
-    float second = normal[1];
+    double second = normal[1];
     if (second == 0.)
         second += eps;
-    ref_vec = Vector(0, -normal[2] / second, 1);
+    auto ref_vec = Vector(0, -normal[2] / second, 1);
     if (normal[2] == 1.)
         ref_vec = Vector(0., 1., 0.);
-    ref_vec /= ref_vec.length();
+    ref_vec.normalize();
+    return ref_vec;
 }
 
 /**
     * @brief Calculate the radian in the rotation system
     *
-    * @param branch_vec: vector of the out-going edge
+    * @param branch: vector of the out-going edge
     * @param normal: normal of the root vertex
     *
     * @return radian
     */
-double cal_radians_3d(const Vector& branch_vec, const Vector& normal) {
-    Vector proj_vec = branch_vec - dot(normal, branch_vec) /
+double cal_radians_3d(const Vector& branch, const Vector& normal) {
+    const Vector proj_vec = branch - dot(normal, branch) /
         normal.length() * normal;
 
-    auto ref_vec = Vector(0, 0, 0);
-    calculate_ref_vec(normal, ref_vec);
+    const auto ref_vec = calculate_ref_vec(normal);
 
     if (proj_vec.length() == 0.0)
         return 0.;
 
-    Vector proj_ref = ref_vec - dot(normal, ref_vec) /
+    const Vector proj_ref = ref_vec - dot(normal, ref_vec) /
         normal.length() * normal;
-    float value = clamp(dot(proj_vec, proj_ref) / proj_vec.length() /
+    const auto value = clamp(dot(proj_vec, proj_ref) / proj_vec.length() /
         proj_ref.length(), 1, -1);
     double radian = std::acos(value);
     if (dot(cross(proj_vec, proj_ref), normal) > 0)
         radian = 2 * M_PI - radian;
 
-    //if (radian>0.1&&radian<6.28) {
-    //    std::cout << "correct" << std::endl;
-    //}
-
+    [[unlikely]]
     if (std::isnan(radian)) {
         std::cout << normal << std::endl;
         std::cout << ref_vec << std::endl;
@@ -164,14 +161,14 @@ double cal_radians_3d(const Vector& branch_vec, const Vector& normal) {
     * @return radian
     */
 double cal_radians_3d(const Vector& branch_vec, const Vector& normal, const Vector& ref_vec) {
-    Vector proj_vec = branch_vec - dot(normal, branch_vec) /
+    const Vector proj_vec = branch_vec - dot(normal, branch_vec) /
         normal.length() * normal;
     if (std::abs(proj_vec.length()) < 1e-8)
         return 0.;
 
-    Vector proj_ref = ref_vec - dot(normal, ref_vec) /
+    const Vector proj_ref = ref_vec - dot(normal, ref_vec) /
         normal.length() * normal;
-    float value = clamp(
+    const auto value = clamp(
         dot(proj_vec, proj_ref) / proj_vec.length() /
         proj_ref.length(), 1, -1);
     double radian = std::acos(value);
@@ -622,13 +619,12 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int thre
     * @param normals: normal of the point cloud
     * @param kdTree: kd-tree for knn query
     * @param tr_dist: distance container
-    * @param diagonal_length: the diagonal length of the point cloud
     *
     * @return None
     */
 void weighted_smooth(const std::vector<Point>& vertices,
-    std::vector<Point>& smoothed_v, const std::vector<Vector>& normals,
-    const Tree& kdTree, float diagonal_length) {
+                     std::vector<Point>& smoothed_v, const std::vector<Vector>& normals,
+                     const Tree& kdTree) {
     int idx = 0;
     double last_dist = INFINITY;
     Point last_v(0., 0., 0.);
@@ -692,67 +688,44 @@ void weighted_smooth(const std::vector<Point>& vertices,
     }
 }
 
-void estimate_normal(const std::vector<Point>& vertices,
-    const Tree& kdTree, std::vector<Vector>& normals, std::vector<NodeID>& zero_normal_id,
-    float& diagonal_length, const bool isGTNormal) {
+auto normalize_normals(std::vector<Vector>& normals) -> void
+{
+    for (auto& normal : normals) {
+        normal.normalize();
+    }
+}
 
-    if (!isGTNormal)
-        normals.clear();
-    int neighbor_num = std::max<int>(int(vertices.size() / 2000.), 192);
+void estimate_normal_no_normals(const std::vector<Point>& vertices, const Tree& kdTree, std::vector<Vector>& normals)
+{
+    normals.clear();
+    const size_t neighbor_num = std::max(static_cast<int>(vertices.size() / 2000.), 192);
     // Data type transfer & Cal diagonal size
-    // TODO: two vectors allocated for two 12 byte arrays
-    std::vector<float> min{ INFINITY, INFINITY, INFINITY },
-        max{ -INFINITY, -INFINITY, -INFINITY };
     NodeID idx = 0;
 
     double last_dist = INFINITY;
     Point last_v(0., 0., 0.);
     for (auto& point : vertices) {
-        if (isGTNormal) {
-            Vector normal = normals[idx];
-            if (normal.length() == 0) {
-                zero_normal_id.push_back(idx);
-            }
-            else {
-                normals[idx] = normalize(normals[idx]);
-            }
-        }
-        else {
-            std::vector<NodeID> neighbors;
-            std::vector<double> neighbor_dist;
-            last_dist += (point - last_v).length();
-            kNN_search(point, kdTree, neighbor_num, neighbors, neighbor_dist, last_dist, true);
-            last_dist = neighbor_dist[neighbor_dist.size() - 1];
-            last_v = point;
+        std::vector<NodeID> neighbors;
+        std::vector<double> neighbor_dist;
+        last_dist += (point - last_v).length();
+        kNN_search(point, kdTree, neighbor_num, neighbors, neighbor_dist, last_dist, true);
+        last_dist = neighbor_dist[neighbor_dist.size() - 1];
+        last_v = point;
 
-            std::vector<Point> neighbor_coords;
-            for (auto idx : neighbors) {
-                neighbor_coords.push_back(vertices[idx]);
-            }
-            Vector normal = estimateNormal(neighbor_coords);
-            if (std::isnan(normal.length())) {
-                std::cout << neighbors.size() << std::endl;
-                std::cout << "error" << std::endl;
-            }
-            normals.push_back(normal);
+        std::vector<Point> neighbor_coords;
+        for (auto neighbor_id : neighbors) {
+            neighbor_coords.push_back(vertices[neighbor_id]);
         }
+        Vector normal = estimateNormal(neighbor_coords);
+        [[unlikely]]
+        if (std::isnan(normal.length())) {
+            std::cerr << neighbors.size() << std::endl;
+            std::cerr << "error" << std::endl;
+        }
+        normals.push_back(normal);
 
-        if (point[0] < min[0])
-            min[0] = point[0];
-        if (point[1] < min[1])
-            min[1] = point[1];
-        if (point[2] < min[2])
-            min[2] = point[2];
-        if (point[0] > max[0])
-            max[0] = point[0];
-        if (point[1] > max[1])
-            max[1] = point[1];
-        if (point[2] > max[2])
-            max[2] = point[2];
         idx++;
     }
-    Point min_p(min[0], min[1], min[2]), max_p(max[0], max[1], max[2]);
-    diagonal_length = (max_p - min_p).length();
 }
 
 /**
@@ -768,15 +741,13 @@ void add_normal_noise(float angle, std::vector<Vector>& normals) {
     std::mt19937 mt;
     mt.seed(seed);
 
-    std::default_random_engine generator;
     std::uniform_real_distribution<double> uniform_distribution(0., M_PI);
 
     for (auto& normal : normals) {
-        Vector ref1;
-        calculate_ref_vec(normal, ref1);
+        Vector ref1 = calculate_ref_vec(normal);
         Vector ref2 = CGLA::cross(normal, ref1);
         ref2 /= ref2.length();
-        float phi = 2 * uniform_distribution(mt);
+        const auto phi = 2.0 * uniform_distribution(mt);
 
         Vector plane_vec = std::cos(phi) * ref1 + std::sin(phi) * ref2;
         plane_vec /= plane_vec.length();
@@ -2249,9 +2220,16 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         float diagonal_length;
 
         std::vector<NodeID> zero_normal_id;
-        estimate_normal(org_vertices, kdTree, org_normals, zero_normal_id, diagonal_length, opts.isGTNormal);
+        if (opts.isGTNormal)
+        {
+            normalize_normals(org_normals);
+        } else
+        {
+            estimate_normal_no_normals(org_vertices, kdTree, org_normals);
+        }
 
         // Fix zero normal
+        [[unlikely]]
         if (!zero_normal_id.empty()) {
             // TODO: should probably not be throwing a stringly typed runtime_error here
             throw std::runtime_error("Zero normal exists!");
@@ -2260,34 +2238,38 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         if (true) {
             std::cout << "Start first round smoothing ..." << std::endl;
             if (!opts.isEuclidean)
-                weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree, diagonal_length);
+                weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree);
             else
+                // TODO: this copies the entire vertices
                 in_smoothed_v = org_vertices;
 
             Tree temp_tree1;
             build_KDTree(temp_tree1, in_smoothed_v, indices);
-
-            estimate_normal(in_smoothed_v, temp_tree1, org_normals,
-                zero_normal_id, diagonal_length, opts.isGTNormal);
+            if (!opts.isGTNormal)
+            {
+                estimate_normal_no_normals(in_smoothed_v, temp_tree1, org_normals);
+            }
 
             // Another round of smoothing
             if (true) {
                 if (!opts.isEuclidean) {
                     std::cout << "Start second round smoothing ..." << std::endl;
-                    // Pointlessly copies in_smoothed_v to a new array, and then deletes all the elements
+
                     std::vector<Point> temp;
                     temp.reserve(in_smoothed_v.size());
                     std::swap(temp, in_smoothed_v);
                     //std::vector<Point> temp(in_smoothed_v.begin(), in_smoothed_v.end());
                     //std::vector<Point> temp = std::move(in_smoothed_v);
                     in_smoothed_v.clear();
-                    weighted_smooth(temp, in_smoothed_v, org_normals, temp_tree1, diagonal_length);
+                    weighted_smooth(temp, in_smoothed_v, org_normals, temp_tree1);
 
                     Tree temp_tree2;
                     build_KDTree(temp_tree2, in_smoothed_v, indices);
 
-                    estimate_normal(in_smoothed_v, temp_tree2, org_normals,
-                        zero_normal_id, diagonal_length, opts.isGTNormal);
+                    if (!opts.isGTNormal)
+                    {
+                        estimate_normal_no_normals(in_smoothed_v, temp_tree1, org_normals);
+                    }
                 }
             }
         }

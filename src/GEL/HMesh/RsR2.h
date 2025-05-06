@@ -274,12 +274,12 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target,
     int threshold, std::vector<NodeID>& path);
 
 void weighted_smooth(const std::vector<Point>& vertices,
-    std::vector<Point>& smoothed_v, const std::vector<Vector>& normals,
-    const Tree& kdTree, float diagonal_length);
+                     std::vector<Point>& smoothed_v, const std::vector<Vector>& normals,
+                     const Tree& kdTree);
 
 void estimate_normal(const std::vector<Point>& vertices,
-    const Tree& kdTree, std::vector<Vector>& normals,
-    std::vector<NodeID>& zero_normal_id, float& diagonal_length, bool isGTNormal);
+                     const Tree& kdTree, std::vector<Vector>& normals,
+                     std::vector<NodeID>& zero_normal_id, bool isGTNormal);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root,
     RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices, bool isEuclidean);
