@@ -339,11 +339,8 @@ bool isIntersecting(RSGraph& mst, NodeID v1,
 
 bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle);
 
-void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_vertices,
-    std::vector<Vector>& org_normals, bool in_isEuclidean = false, int in_genus = -1,
-    int in_k = 70, int in_r = 20, int in_theta = 60, int in_n = 50);
-
-auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vector>& normals, const RsROpts& opts) -> ::HMesh::Manifold;
+auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vector>& normals,
+    RsROpts& opts) -> ::HMesh::Manifold;
 
 } // namespace GEL::HMesh::RSR
 

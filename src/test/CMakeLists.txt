@@ -36,3 +36,4 @@ add_subdirectory(Geometry-kdtree)
 #add_subdirectory(GLGraphics-console)
 
 add_subdirectory(Util-ThreadPool)
+add_subdirectory(RsR)

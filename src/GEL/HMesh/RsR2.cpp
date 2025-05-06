@@ -2494,7 +2494,7 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
 }
 
 auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vector>& normals,
-    const RsROpts& opts) -> ::HMesh::Manifold
+    RsROpts& opts) -> ::HMesh::Manifold
 {
     ::HMesh::Manifold output;
     auto vertices2 = vertices;
