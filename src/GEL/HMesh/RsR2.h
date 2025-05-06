@@ -15,7 +15,6 @@
 
 namespace GEL::HMesh::RSR
 {
-
 using namespace CGLA;
 using namespace Geometry;
 using uint = unsigned int;
@@ -28,12 +27,11 @@ using m_Edge = std::pair<NodeID, NodeID>;
 double cal_radians_3d(const Vector& branch, const Vector& normal);
 
 double cal_radians_3d(const Vector& branch_vec, const Vector& normal,
-    const Vector& ref_vec);
+                      const Vector& ref_vec);
 
 ///
 /// TODO: documentation
-struct RsROpts
-{
+struct RsROpts {
     int32_t genus = -1;
     int32_t k = 70;
     int32_t r = 20;
@@ -46,8 +44,7 @@ struct RsROpts
     bool isFaceLoop = true;
 };
 
-struct Boolean
-{
+struct Boolean {
     bool inner;
 };
 
@@ -60,13 +57,15 @@ struct Vertex {
     Vector normal = Vector(0., 0., 0.);
     std::vector<Boolean> faceExist;
     float distance = 0.0f;
+
     struct Neighbor {
         double angle;
         uint v;
         mutable uint tree_id = 0;
         mutable bool faceExist = false;
 
-        Neighbor(const Vertex& u, const Vertex& v, uint id) {
+        Neighbor(const Vertex& u, const Vertex& v, uint id)
+        {
             this->v = id;
             //std::cout << v.coords << std::endl;
             //std::cout << u.coords << std::endl;
@@ -74,14 +73,17 @@ struct Vertex {
             this->angle = cal_radians_3d(v.coords - u.coords, u.normal);
         }
 
-        bool operator < (const Neighbor& rhs) const {
+        bool operator <(const Neighbor& rhs) const
+        {
             return this->angle < rhs.angle || this->angle == rhs.angle && this->v != rhs.v;
         }
 
-        bool operator<(Neighbor& rhs) const {
+        bool operator<(Neighbor& rhs) const
+        {
             return this->angle < rhs.angle || this->angle == rhs.angle && this->v != rhs.v;
         }
     };
+
     // TODO: mutable elements inside std::set is potentially unsound
     std::set<Neighbor> ordered_neighbors;
 };
@@ -100,21 +102,23 @@ class SimpGraph : public AMGraph {
 public:
     Util::AttribVec<AMGraph::EdgeID, Edge> m_edges;
 
-    EdgeID connect_nodes(const NodeID source, const NodeID target, const float weight = 0.) {
-
+    EdgeID connect_nodes(const NodeID source, const NodeID target, const float weight = 0.)
+    {
         const EdgeID id = AMGraph::connect_nodes(source, target);
         m_edges[id].weight = weight;
         return id;
     }
 
-    [[nodiscard]] double get_weight(const NodeID n1, const NodeID n2) const {
+    [[nodiscard]] double get_weight(const NodeID n1, const NodeID n2) const
+    {
         return m_edges[find_edge(n1, n2)].weight;
     }
 
     /** Disconnect nodes. This operation removes the edge from the edge maps of the two formerly connected
          vertices, but the number of edges reported by the super class AMGraph is not decremented, so the edge is only
          invalidated. Call cleanup to finalize removal. */
-    void disconnect_nodes(const NodeID n0, const NodeID n1) {
+    void disconnect_nodes(const NodeID n0, const NodeID n1)
+    {
         if (valid_node_id(n0) && valid_node_id(n1)) {
             edge_map[n0].erase(n1);
             edge_map[n1].erase(n0);
@@ -136,7 +140,8 @@ public:
     Util::AttribVec<AMGraph::EdgeID, Edge> m_edges;
 
     /// Compute sqr distance between two nodes - not necessarily connected.
-    [[nodiscard]] double dist(const NodeID n0, const NodeID n1) const {
+    [[nodiscard]] double dist(const NodeID n0, const NodeID n1) const
+    {
         if (valid_node_id(n0) && valid_node_id(n1))
             return (m_vertices[n0].coords - m_vertices[n1].coords).length();
         else
@@ -150,7 +155,8 @@ public:
         return sum_len / current_no_edges;
     }
 
-    void remove_edge(const NodeID source, const NodeID target) {
+    void remove_edge(const NodeID source, const NodeID target)
+    {
         this->total_edge_length -= this->m_edges[edge_map[source][target]].weight;
         if (valid_node_id(source) && valid_node_id(target)) {
             edge_map[source].erase(target);
@@ -159,21 +165,23 @@ public:
         current_no_edges--;
     }
 
-    void remove_neighbor(const NodeID root, const NodeID neighbor) {
+    void remove_neighbor(const NodeID root, const NodeID neighbor)
+    {
         auto& u = m_vertices[root];
         const auto& v = m_vertices[neighbor];
         u.ordered_neighbors.erase(Neighbor(u, v, neighbor));
     }
 
-    void insert_neighbor(const NodeID root, const NodeID neighbor) {
+    void insert_neighbor(const NodeID root, const NodeID neighbor)
+    {
         const auto& u = m_vertices[root];
         const auto& v = m_vertices[neighbor];
         m_vertices[root].ordered_neighbors.insert(Neighbor(u, v, neighbor));
         //std::cout << Neighbor(u, v, neighbor).angle << std::endl;
     }
 
-    EdgeID add_edge(const NodeID source, const NodeID target, const float weight = 0.) {
-
+    EdgeID add_edge(const NodeID source, const NodeID target, const float weight = 0.)
+    {
         const EdgeID id = this->connect_nodes(source, target);
         if (id != InvalidEdgeID) {
             current_no_edges++;
@@ -183,14 +191,13 @@ public:
             this->total_edge_length += weight;
             insert_neighbor(source, target);
             insert_neighbor(target, source);
-        }
-        else {
+        } else {
             /*std::cout << "weird" << std::endl;
             std::cout << valid_node_id(source) << std::endl;
             std::cout << valid_node_id(target) << std::endl;
             std::cout << source << std::endl;
             std::cout << target << std::endl;
-            std::cout << (find_edge(target, source) == InvalidEdgeID) 
+            std::cout << (find_edge(target, source) == InvalidEdgeID)
                 << std::endl;*/
         }
 
@@ -218,26 +225,30 @@ public:
         return n;
     }
 
-    void init(const std::vector<Point>& vertices, const std::vector<Vector>& normals) {
+    void init(const std::vector<Point>& vertices, const std::vector<Vector>& normals)
+    {
         for (int i = 0; i < vertices.size(); i++) {
             NodeID id = this->add_node(vertices[i]);
             m_vertices[id].normal = normals[i];
         }
     }
 
-    void init(const std::vector<Point>& vertices) {
-        for (const auto & vertice : vertices) {
+    void init(const std::vector<Point>& vertices)
+    {
+        for (const auto& vertice : vertices) {
             this->add_node(vertice);
         }
     }
 
-    void init(int no_vertex) {
+    void init(int no_vertex)
+    {
         for (int i = 0; i < no_vertex; i++) {
             AMGraph::add_node();
         }
     }
 
-    void get_node_set(NodeSet& sets) {
+    void get_node_set(NodeSet& sets)
+    {
         for (NodeID i = 0; i < edge_map.size(); i++) {
             sets.insert(i);
         }
@@ -248,30 +259,31 @@ typedef Geometry::KDTree<Point, NodeID> Tree;
 typedef Geometry::KDTreeRecord<Point, NodeID> Record;
 
 void kNN_search(const Point&, const Tree&, int,
-    std::vector<NodeID>&, std::vector<double>&,
-    double last_dist = INFINITY, bool isContain = true);
+                std::vector<NodeID>&, std::vector<double>&,
+                double last_dist = INFINITY, bool isContain = true);
 
 void NN_search(const Point&, const Tree&, double,
-    std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
+               std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
 
 float find_components(std::vector<Point>& vertices,
-    std::vector<std::vector<Point>>& component_vertices,
-    std::vector<Point>& smoothed_v,
-    std::vector<std::vector<Point>>& component_smoothed_v,
-    std::vector<Vector>& normals,
-    std::vector<std::vector<Vector>>& component_normals,
-    const Tree& kdTree,
-    float cross_conn_thresh,
-    float outlier_thresh,
-    int k,
-    bool isEuclidean);
+                      std::vector<std::vector<Point>>& component_vertices,
+                      std::vector<Point>& smoothed_v,
+                      std::vector<std::vector<Point>>& component_smoothed_v,
+                      std::vector<Vector>& normals,
+                      std::vector<std::vector<Vector>>& component_normals,
+                      const Tree& kdTree,
+                      float cross_conn_thresh,
+                      float outlier_thresh,
+                      int k,
+                      bool isEuclidean);
 
 void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& smoothed_v,
-    const std::vector<Vector>& normals, const Tree& kdTree, SimpGraph& dist_graph,
-    std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh, int k, bool isEuclidean);
+                const std::vector<Vector>& normals, const Tree& kdTree, SimpGraph& dist_graph,
+                std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh, int k,
+                bool isEuclidean);
 
 int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target,
-    int threshold, std::vector<NodeID>& path);
+                       int threshold, std::vector<NodeID>& path);
 
 void weighted_smooth(const std::vector<Point>& vertices,
                      std::vector<Point>& smoothed_v, const std::vector<Vector>& normals,
@@ -282,41 +294,41 @@ void estimate_normal(const std::vector<Point>& vertices,
                      std::vector<NodeID>& zero_normal_id, bool isGTNormal);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root,
-    RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices, bool isEuclidean);
+                           RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices, bool isEuclidean);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
 void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
-    Tree& kdTree, std::vector<Vector>& normals, int k);
+                                Tree& kdTree, std::vector<Vector>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
-    Tree& KDTree, float edge_length);
+                   Tree& KDTree, float edge_length);
 
 void add_face(RSGraph& G, std::vector<NodeID>& item,
-    std::vector<std::vector<NodeID>>& faces);
+              std::vector<std::vector<NodeID>>& faces);
 
 void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
-    RSGraph& mst, std::vector<NodeID>& connected_handle_root, int k,
-    int step_thresh, bool isEuclidean);
+                    RSGraph& mst, std::vector<NodeID>& connected_handle_root, int k,
+                    int step_thresh, bool isEuclidean);
 
 // Face Loop
 
 void init_face_loop_label(RSGraph& g);
 
 const Neighbor& successor(const RSGraph& g,
-    const NodeID& root,
-    const NodeID& branch);
+                          const NodeID& root,
+                          const NodeID& branch);
 
 
 const Neighbor& predecessor(const RSGraph& g,
-    const NodeID& root,
-    const NodeID& branch);
+                            const NodeID& root,
+                            const NodeID& branch);
 
 void maintain_face_loop(RSGraph& g,
-    const NodeID source, const NodeID target);
+                        const NodeID source, const NodeID target);
 
 const Neighbor& get_neighbor_info(const RSGraph& g,
-    const NodeID& root, const NodeID& branch);
+                                  const NodeID& root, const NodeID& branch);
 
 // Utils
 void showProgressBar(float progress);
@@ -324,24 +336,23 @@ void showProgressBar(float progress);
 Vector projected_vector(Vector& input, Vector& normal);
 
 void find_common_neighbor(NodeID neighbor, NodeID root,
-    std::vector<NodeID>& share_neighbor, RSGraph& g);
+                          std::vector<NodeID>& share_neighbor, RSGraph& g);
 
 // Algorithm
 
 bool geometry_check(RSGraph& mst, m_Edge& candidate,
-    Tree& kdTree);
+                    Tree& kdTree);
 
 bool Vanilla_check(RSGraph& mst, m_Edge& candidate,
-    Tree& kdTree);
+                   Tree& kdTree);
 
 bool isIntersecting(RSGraph& mst, NodeID v1,
-    NodeID v2, NodeID v3, NodeID v4);
+                    NodeID v2, NodeID v3, NodeID v4);
 
 bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle);
 
 auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vector>& normals,
-    RsROpts& opts) -> ::HMesh::Manifold;
-
+                         RsROpts& opts) -> ::HMesh::Manifold;
 } // namespace GEL::HMesh::RSR
 
 #endif // GEL_HMesh_RsR2_hpp
