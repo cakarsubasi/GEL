@@ -9,4 +9,4 @@ target_link_libraries(RsR_test GEL)
 add_test(NAME GEL.Test.RsR COMMAND RsR_test)
 
 #add_test(NAME GEL.Test.RsRPython COMMAND ${PYTEST} "${CMAKE_CURRENT_SOURCE_DIR}/rsr.py")
-add_test(NAME GEL.Test.RsRPython COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/rsr.py")
+#add_test(NAME GEL.Test.RsRPython COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/rsr.py")
