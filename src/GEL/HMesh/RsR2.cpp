@@ -2214,42 +2214,25 @@ void build_mst(
     * @return None
     */
 void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_vertices,
-    std::vector<Vector>& org_normals, bool in_isEuclidean, int in_genus, 
-    int in_k, int in_r, int in_theta, int in_n)
+    std::vector<Vector>& org_normals, const RsROpts& opts)
 {
-    RsR_Timer recon_timer;
-    RsROpts opts = {
-        .genus = in_genus,
-        .k = in_k,
-        .r = in_r,
-        .theta = in_theta,
-        .n = in_n, // step_threshold
-        .isEuclidean = in_isEuclidean,
-    };
+    RsR_Timer timer;
 
-    if (org_normals.empty()) {
-        opts.isGTNormal = false;
-    }
-    /*std::cout << exp_genus << std::endl;
-    std::cout << k << std::endl;
-    std::cout << r << std::endl;
-    std::cout << theta << std::endl;
-    std::cout << step_thresh << std::endl;
-    std::cout << org_vertices[0] << std::endl;*/
+    timer
+        .create("Whole process")
+        .create("Initialization")
+        .create("Import pc")
+        .create("Estimate normals")
+        .create("Build MST")
+        .create("Build Rotation System")
+        .create("algorithm");
 
-    recon_timer.create("Whole process");
-    recon_timer.create("Initialization");
-    recon_timer.create("Import pc");
-    recon_timer.create("Estimate normals");
-    recon_timer.create("Build MST");
-    recon_timer.create("Build Rotation System");
-    recon_timer.create("algorithm");
-
-    recon_timer.start("Whole process");
-    recon_timer.start("Initialization");
+    timer
+        .start("Whole process")
+        .start("Initialization");
 
     // Estimate normals & orientation & weighted smoothing
-    recon_timer.start("Estimate normals");
+    timer.start("Estimate normals");
     std::vector<Point> in_smoothed_v;
     {
         std::vector<NodeID> indices(org_vertices.size());
@@ -2264,8 +2247,6 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
 
         //
         float diagonal_length;
-
-
 
         std::vector<NodeID> zero_normal_id;
         estimate_normal(org_vertices, kdTree, org_normals, zero_normal_id, diagonal_length, opts.isGTNormal);
@@ -2314,10 +2295,10 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
             in_smoothed_v = org_vertices;
         }
     }
-    recon_timer.end("Estimate normals");
-    recon_timer.end("Initialization");
+    timer.end("Estimate normals");
+    timer.end("Initialization");
 
-    recon_timer.start("algorithm");
+    timer.start("algorithm");
     // Find components
     struct Components
     {
@@ -2359,8 +2340,6 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
     for (int component_id = 0; component_id < component_vertices.size(); component_id++) {
         std::cout << "Reconstructing component " + std::to_string(component_id) + " ..." << std::endl;
 
-        opts.isFaceLoop = true;
-
         std::vector<std::vector<NodeID>> faces;
         std::vector<Point> vertices = component_vertices[component_id];
         std::vector<Vector> normals = component_normals[component_id];
@@ -2373,7 +2352,7 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         Tree kdTree;
         build_KDTree(kdTree, smoothed_v, indices);
 
-        recon_timer.start("Build MST");
+        timer.start("Build MST");
 
         std::cout << "Init mst" << std::endl;
 
@@ -2418,7 +2397,7 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
                 std::sort(edge_length.begin(), edge_length.end(), edge_comparator);
             }
         }
-        recon_timer.end("Build MST");
+        timer.end("Build MST");
 
         // Initialize face loop label
         mst.etf.reserve(6 * vertices.size() - 11);
@@ -2460,8 +2439,8 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
             mst.isFinal = true;
             std::vector<NodeID> connected_handle_root;
             connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.isEuclidean);
-            opts.isFaceLoop = false;
-            triangulate(faces, mst, kdTree, opts.isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root);
+            bool isFaceLoop = false;
+            triangulate(faces, mst, kdTree, isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root);
         }
 
         ::HMesh::Manifold res;
@@ -2486,11 +2465,11 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         output.merge(res);
     }
 
-    recon_timer.end("algorithm");
-    recon_timer.end("Whole process");
+    timer.end("algorithm");
+    timer.end("Whole process");
     std::string line(40, '=');
     std::cout << line << std::endl << std::endl;
-    recon_timer.show();
+    timer.show();
 }
 
 auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vector>& normals,
@@ -2499,7 +2478,11 @@ auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<V
     ::HMesh::Manifold output;
     auto vertices2 = vertices;
     auto normals2 = normals;
-    reconstruct_single(output, vertices2, normals2, opts.isEuclidean, opts.genus, opts.k, opts.r, opts.theta, opts.n);
+    if (normals.empty()) {
+        opts.isGTNormal = false;
+    }
+
+    reconstruct_single(output, vertices2, normals2, opts);
     return output;
 }
 }
