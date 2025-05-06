@@ -13,8 +13,37 @@ static constexpr auto file_name =
         "../../../../data/PointClouds/Capital_A.obj";
         //    "../../../../data/bunny.obj";
 //    "../../../../data/torus.obj";
+static constexpr auto output_name =
+        "Capital_A.obj";
 
-int test_new() {
+auto manifold_is_identical(HMesh::Manifold left, HMesh::Manifold right) -> bool
+{
+    if (left.positions.size() != right.positions.size())
+    {
+        return false;
+    }
+    // This is a horrendous way of actually checking if two manifolds are identical,
+    // but assuming we did not mess something up during construction, they should be
+    // using identical IDs, which is good enough for quick regression analysis
+
+    const auto left_edges = left.halfedges();
+    const auto right_edges = right.halfedges();
+    for (auto left_begin = left_edges.begin(), right_begin = right_edges.begin();
+         left_begin != left_edges.end() && right_begin != right_edges.end() ;
+         ++left_begin, ++right_begin)
+    {
+        if (*left_begin != *right_begin)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto test_new() -> HMesh::Manifold
+{
+    std::cout << "======================\n"
+    << "Begin new function\n";
     TriMesh input;
     load(file_name, input);
     //assert(success);
@@ -35,6 +64,7 @@ int test_new() {
     }
     normals = {};
     GEL::HMesh::RSR::RsROpts opts;
+    opts.isEuclidean = true;
     opts.k = 30;
     opts.genus = 1;
     opts.r = 20;
@@ -43,14 +73,16 @@ int test_new() {
     // k: 70 is too large
     // r: needs isEuclidean false
     std::cout << output.positions.size() << "\n";
-    const bool result = HMesh::obj_save("Bunny_Euc2.obj", output);
+    const bool result = HMesh::obj_save(output_name, output);
     assert(result);
-    return 0;
+    return output;
 }
 
 
-int test_old()
+auto test_old() -> HMesh::Manifold
 {
+    std::cout << "======================\n"
+    << "Begin original function\n";
     TriMesh input;
     load(file_name, input);
     //assert(success);
@@ -75,13 +107,13 @@ int test_old()
     // k: 70 is too large
     // r: needs isEuclidean false
     std::cout << output.positions.size() << "\n";
-    const bool result = HMesh::obj_save("Bunny_Euc2.obj", output);
-    assert(result);
-    return 0;
+    //const bool result = HMesh::obj_save(output_name, output);
+
+    return output;
 }
 
 int main()
 {
-    test_new();
+    assert(manifold_is_identical(test_new(), test_old()));
     return 0;
 }
