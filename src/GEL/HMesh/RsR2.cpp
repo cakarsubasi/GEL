@@ -2242,18 +2242,10 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         //
         float diagonal_length;
 
-        std::vector<NodeID> zero_normal_id;
         if (opts.isGTNormal) {
             normalize_normals(org_normals);
         } else {
             estimate_normal_no_normals(org_vertices, kdTree, org_normals);
-        }
-
-        // Fix zero normal
-        [[unlikely]]
-        if (!zero_normal_id.empty()) {
-            // TODO: should probably not be throwing a stringly typed runtime_error here
-            throw std::runtime_error("Zero normal exists!");
         }
 
         if (true) {
@@ -2287,7 +2279,7 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
                     build_KDTree(temp_tree2, in_smoothed_v, indices);
 
                     if (!opts.isGTNormal) {
-                        estimate_normal_no_normals(in_smoothed_v, temp_tree1, org_normals);
+                        estimate_normal_no_normals(in_smoothed_v, temp_tree2, org_normals);
                     }
                 }
             }
