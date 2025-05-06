@@ -86,7 +86,7 @@ public:
 
     /// @brief number of threads
     /// @return number of threads
-    [[nodiscard]] constexpr size_t size() const
+    [[nodiscard]] size_t size() const
     {
         return m_threads.size();
     }
