@@ -17,17 +17,20 @@ namespace GEL::HMesh::RSR
 {
 using namespace CGLA;
 using namespace Geometry;
-using uint = unsigned int;
+using uint = uint32_t;
+using f32 = float;
+using f64 = double;
+
 using NodeID = AMGraph::NodeID;
 
-using Vector = Vec3d;
-using Point = Vector;
-using m_Edge = std::pair<NodeID, NodeID>;
+using Vec3 = Vec3d;
+using Point = Vec3;
+using TEdge = std::pair<NodeID, NodeID>;
 
-double cal_radians_3d(const Vector& branch, const Vector& normal);
+double cal_radians_3d(const Vec3& branch, const Vec3& normal);
 
-double cal_radians_3d(const Vector& branch_vec, const Vector& normal,
-                      const Vector& ref_vec);
+double cal_radians_3d(const Vec3& branch_vec, const Vec3& normal,
+                      const Vec3& ref_vec);
 
 ///
 /// TODO: documentation
@@ -38,6 +41,7 @@ struct RsROpts {
     int32_t theta = 60;
     int32_t n = 50;
     bool isEuclidean = false;
+
     /// Are normals included with the input?
     bool isGTNormal = true;
     bool isFaceNormal = true;
@@ -50,11 +54,11 @@ struct Boolean {
 
 /*Graph definition. The RsR graph here is integrated with the rotation system based on AMGraph*/
 struct Vertex {
-    int id = 0;
+    NodeID id = 0;
     int normal_rep = -1;
     bool colored = false;
-    Vector coords = Vector(0., 0., 0.);
-    Vector normal = Vector(0., 0., 0.);
+    Vec3 coords = Vec3(0., 0., 0.);
+    Vec3 normal = Vec3(0., 0., 0.);
     std::vector<Boolean> faceExist;
     float distance = 0.0f;
 
@@ -64,7 +68,7 @@ struct Vertex {
         mutable uint tree_id = 0;
         mutable bool faceExist = false;
 
-        Neighbor(const Vertex& u, const Vertex& v, uint id)
+        Neighbor(const Vertex& u, const Vertex& v, const uint id)
         {
             this->v = id;
             //std::cout << v.coords << std::endl;
@@ -204,7 +208,7 @@ public:
         return id;
     }
 
-    NodeID add_node(const Vector& p)
+    NodeID add_node(const Vec3& p)
     {
         const NodeID n = AMGraph::add_node();
         Vertex v;
@@ -214,7 +218,7 @@ public:
         return n;
     }
 
-    NodeID add_node(const Vector& p, const Vector& in_normal)
+    NodeID add_node(const Vec3& p, const Vec3& in_normal)
     {
         NodeID n = AMGraph::add_node();
         Vertex v;
@@ -225,7 +229,7 @@ public:
         return n;
     }
 
-    void init(const std::vector<Point>& vertices, const std::vector<Vector>& normals)
+    void init(const std::vector<Point>& vertices, const std::vector<Vec3>& normals)
     {
         for (int i = 0; i < vertices.size(); i++) {
             NodeID id = this->add_node(vertices[i]);
@@ -240,14 +244,14 @@ public:
         }
     }
 
-    void init(int no_vertex)
+    void init(const int no_vertex)
     {
         for (int i = 0; i < no_vertex; i++) {
             AMGraph::add_node();
         }
     }
 
-    void get_node_set(NodeSet& sets)
+    void get_node_set(NodeSet& sets) const
     {
         for (NodeID i = 0; i < edge_map.size(); i++) {
             sets.insert(i);
@@ -258,27 +262,23 @@ public:
 typedef Geometry::KDTree<Point, NodeID> Tree;
 typedef Geometry::KDTreeRecord<Point, NodeID> Record;
 
-void kNN_search(const Point&, const Tree&, int,
-                std::vector<NodeID>&, std::vector<double>&,
-                double last_dist = INFINITY, bool isContain = true);
-
 void NN_search(const Point&, const Tree&, double,
                std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
 
-float find_components(std::vector<Point>& vertices,
-                      std::vector<std::vector<Point>>& component_vertices,
-                      std::vector<Point>& smoothed_v,
-                      std::vector<std::vector<Point>>& component_smoothed_v,
-                      std::vector<Vector>& normals,
-                      std::vector<std::vector<Vector>>& component_normals,
-                      const Tree& kdTree,
-                      float cross_conn_thresh,
-                      float outlier_thresh,
-                      int k,
-                      bool isEuclidean);
+double find_components(std::vector<Point>& vertices,
+                       std::vector<std::vector<Point>>& component_vertices,
+                       std::vector<Point>& smoothed_v,
+                       std::vector<std::vector<Point>>& component_smoothed_v,
+                       std::vector<Vec3>& normals,
+                       std::vector<std::vector<Vec3>>& component_normals,
+                       const Tree& kdTree,
+                       float cross_conn_thresh,
+                       float outlier_thresh,
+                       int k,
+                       bool isEuclidean);
 
 void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& smoothed_v,
-                const std::vector<Vector>& normals, const Tree& kdTree, SimpGraph& dist_graph,
+                const std::vector<Vec3>& normals, const Tree& kdTree, SimpGraph& dist_graph,
                 std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh, int k,
                 bool isEuclidean);
 
@@ -286,25 +286,25 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target,
                        int threshold, std::vector<NodeID>& path);
 
 void weighted_smooth(const std::vector<Point>& vertices,
-                     std::vector<Point>& smoothed_v, const std::vector<Vector>& normals,
+                     std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
                      const Tree& kdTree);
 
 void estimate_normal(const std::vector<Point>& vertices,
-                     const Tree& kdTree, std::vector<Vector>& normals,
+                     const Tree& kdTree, std::vector<Vec3>& normals,
                      std::vector<NodeID>& zero_normal_id, bool isGTNormal);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root,
-                           RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices, bool isEuclidean);
+                           RSGraph& gn, std::vector<Vec3>& normals, std::vector<Point>& vertices, bool isEuclidean);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
 void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
-                                Tree& kdTree, std::vector<Vector>& normals, int k);
+                                Tree& kdTree, std::vector<Vec3>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
                    Tree& KDTree, float edge_length);
 
-void add_face(RSGraph& G, std::vector<NodeID>& item,
+void add_face(RSGraph& G, const std::vector<NodeID>& item,
               std::vector<std::vector<NodeID>>& faces);
 
 void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
@@ -324,34 +324,28 @@ const Neighbor& predecessor(const RSGraph& g,
                             const NodeID& root,
                             const NodeID& branch);
 
-void maintain_face_loop(RSGraph& g,
-                        const NodeID source, const NodeID target);
+void maintain_face_loop(RSGraph& g, NodeID source, NodeID target);
 
-const Neighbor& get_neighbor_info(const RSGraph& g,
-                                  const NodeID& root, const NodeID& branch);
+const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const NodeID& branch);
 
 // Utils
 void showProgressBar(float progress);
 
-Vector projected_vector(Vector& input, Vector& normal);
+Vec3 projected_vector(Vec3& input, Vec3& normal);
 
-void find_common_neighbor(NodeID neighbor, NodeID root,
-                          std::vector<NodeID>& share_neighbor, RSGraph& g);
+void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& share_neighbor, RSGraph& g);
 
 // Algorithm
 
-bool geometry_check(RSGraph& mst, m_Edge& candidate,
-                    Tree& kdTree);
+bool geometry_check(RSGraph& mst, TEdge& candidate, Tree& kdTree);
 
-bool Vanilla_check(RSGraph& mst, m_Edge& candidate,
-                   Tree& kdTree);
+bool Vanilla_check(RSGraph& mst, TEdge& candidate, Tree& kdTree);
 
-bool isIntersecting(RSGraph& mst, NodeID v1,
-                    NodeID v2, NodeID v3, NodeID v4);
+bool isIntersecting(RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4);
 
-bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle);
+bool routine_check(const RSGraph& mst, const std::vector<NodeID>& triangle);
 
-auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vector>& normals,
+auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vec3>& normals,
                          RsROpts& opts) -> ::HMesh::Manifold;
 } // namespace GEL::HMesh::RSR
 

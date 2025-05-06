@@ -16,12 +16,8 @@ static constexpr auto file_name =
 static constexpr auto output_name =
         "Capital_A.obj";
 
-auto manifold_is_identical(HMesh::Manifold left, HMesh::Manifold right) -> bool
+auto manifold_is_identical(const HMesh::Manifold& left, const HMesh::Manifold& right) -> bool
 {
-    if (left.positions.size() != right.positions.size())
-    {
-        return false;
-    }
     // This is a horrendous way of actually checking if two manifolds are identical,
     // but assuming we did not mess something up during construction, they should be
     // using identical IDs, which is good enough for quick regression analysis
