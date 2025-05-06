@@ -290,16 +290,14 @@ void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
     Tree& kdTree, std::vector<Vector>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
-    Tree& KDTree, float edge_length, int& bettiNum_1);
+    Tree& KDTree, float edge_length);
 
 void add_face(RSGraph& G, std::vector<NodeID>& item,
-    std::vector<std::vector<NodeID>>& faces, int& bettiNum_1);
+    std::vector<std::vector<NodeID>>& faces);
 
 void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
-    RSGraph& mst, std::vector<NodeID>& connected_handle_root,
-    std::vector<int>& betti, int k,
-    int step_thresh, bool isEuclidean,
-    int& bettiNum_1);
+    RSGraph& mst, std::vector<NodeID>& connected_handle_root, int k,
+    int step_thresh, bool isEuclidean);
 
 // Face Loop
 
@@ -315,7 +313,7 @@ const Neighbor& predecessor(const RSGraph& g,
     const NodeID& branch);
 
 void maintain_face_loop(RSGraph& g,
-    const NodeID source, const NodeID target, int& bettiNum_1);
+    const NodeID source, const NodeID target);
 
 const Neighbor& get_neighbor_info(const RSGraph& g,
     const NodeID& root, const NodeID& branch);

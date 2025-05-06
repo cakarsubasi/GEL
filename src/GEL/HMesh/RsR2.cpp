@@ -1326,7 +1326,7 @@ const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const No
     return (*iter);
 }
 
-void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target, int& bettiNum_1) {
+void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target) {
     auto this_v_tree = predecessor(g, source, target).tree_id;
     auto neighbor_tree = predecessor(g, target, source).tree_id;
 
@@ -1335,8 +1335,6 @@ void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target, in
     auto v = result.second;
     get_neighbor_info(g, source, target).tree_id = u;
     get_neighbor_info(g, target, source).tree_id = v;
-
-    bettiNum_1++;
 }
 
 bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle) {
@@ -1387,7 +1385,7 @@ bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle) {
 
 
 void add_face(RSGraph& G, std::vector<NodeID>& item,
-    std::vector<std::vector<NodeID>>& faces, int& bettiNum_1) {
+    std::vector<std::vector<NodeID>>& faces) {
     NodeID v_i = item[0];
     NodeID v_u = item[1];
     NodeID v_w = item[2];
@@ -1403,11 +1401,10 @@ void add_face(RSGraph& G, std::vector<NodeID>& item,
     G.m_edges[G.find_edge(v_i, v_w)].ref_time += 1;
     G.m_edges[G.find_edge(v_u, v_i)].ref_time += 1;
     faces.push_back(item);
-    bettiNum_1--;
 }
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<NodeID>>& faces,
-    Tree& KDTree, float edge_length, int& bettiNum_1) {
+    Tree& KDTree, float edge_length) {
 
     Vector v1_n = mst.m_vertices[v1].normal;
     Vector v2_n = mst.m_vertices[v2].normal;
@@ -1421,7 +1418,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     find_common_neighbor(v1, v2, share_neighbors, mst);
     if (share_neighbors.size() == 0) {
         mst.add_edge(v1, v2, edge_length);
-        maintain_face_loop(mst, v1, v2, bettiNum_1);
+        maintain_face_loop(mst, v1, v2);
         return true;
     }
     //if ((v1 == 30045 && v2 == 69461) || v1 == 69461 && v2 == 30045)
@@ -1487,10 +1484,10 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     if (isValid) {
         AMGraph::EdgeID added_edge = mst.add_edge(v1, v2,
             edge_length);
-        maintain_face_loop(mst, v1, v2, bettiNum_1);
+        maintain_face_loop(mst, v1, v2);
         for (auto& face : temp) {
             ;
-            add_face(mst, face, faces, bettiNum_1);
+            add_face(mst, face, faces);
         }
     }
 
@@ -1538,20 +1535,19 @@ void export_obj(std::vector<Point>& in_vertices, RSGraph& g, std::string out_pat
     * @param kdTree: kd-tree for knn query
     * @param tr_dist: distance container
     * @param connected_handle_root: [OUT] log the connected handles
-    * @param betti: [OUT] log betti number changes
     * @param k: number of kNN search
     * @param isEuclidean: if to use Euclidean distance
     * @param step_thresh: step threshold for shortest distance path early stop
     *
     * @return None
     */
-void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
+void connect_handle(
+    const std::vector<Point>& smoothed_v, Tree& KDTree,
     RSGraph& mst, std::vector<NodeID>& connected_handle_root,
-    std::vector<int>& betti,
     int k,
     int step_thresh,
-    bool isEuclidean,
-    int& bettiNum_1) {
+    bool isEuclidean)
+{
 
     std::vector<NodeID> imp_node;
     int num = 0;
@@ -1680,9 +1676,7 @@ void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
                         connected_handle_root.push_back(connected_neighbor);
                     }
 
-                    bettiNum_1++;
                     edge_num++;
-                    betti.push_back(bettiNum_1);
                     //fs::path out_edge_path("C:/Projects_output/letters/edge_" + std::to_string(edge_num) + ".obj");
                     //export_continuous_edges(mst, path, out_edge_path);
                 }
@@ -1994,8 +1988,6 @@ void triangulate(
     bool isEuclidean,
     std::vector<float>& length_thresh,
     std::vector<NodeID>& connected_handle_root,
-    std::vector<int>& betti,
-    int& bettiNum_1,
     bool isFinalize = false)
 {
 
@@ -2065,11 +2057,7 @@ void triangulate(
 
                 avg_edge_length = G.total_edge_length / G.no_edges();
 
-                bettiNum_1++;
-
-                add_face(G, item.first, faces, bettiNum_1);
-
-                betti.push_back(bettiNum_1);
+                add_face(G, item.first, faces);
             }
             else
                 continue;
@@ -2091,7 +2079,7 @@ void triangulate(
                     if (time1 == 2 || time2 == 2 || time3 == 2)
                         continue;
 
-                    add_face(G, face, faces, bettiNum_1);
+                    add_face(G, face, faces);
                 }
             }
 
@@ -2222,9 +2210,6 @@ void build_mst(
 /**
     * @brief Reconstruct a single file
     *
-    * @param noise_type: type of noise added for the noise experiments
-    * @param sigma: the standard deviation of added noise
-    * @param amplitude: the amplitude of added noise
     *
     * @return None
     */
@@ -2233,8 +2218,6 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
     int in_k, int in_r, int in_theta, int in_n)
 {
     RsR_Timer recon_timer;
-    int bettiNum = 0; // what does this do
-    int& bettiNum_1 = bettiNum;
     RsROpts opts = {
         .genus = in_genus,
         .k = in_k,
@@ -2243,6 +2226,10 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         .n = in_n, // step_threshold
         .isEuclidean = in_isEuclidean,
     };
+
+    if (org_normals.empty()) {
+        opts.isGTNormal = false;
+    }
     /*std::cout << exp_genus << std::endl;
     std::cout << k << std::endl;
     std::cout << r << std::endl;
@@ -2278,10 +2265,7 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         //
         float diagonal_length;
 
-        // TODO: move this to the top
-        if (org_normals.empty()) {
-            opts.isGTNormal = false;
-        }
+
 
         std::vector<NodeID> zero_normal_id;
         estimate_normal(org_vertices, kdTree, org_normals, zero_normal_id, diagonal_length, opts.isGTNormal);
@@ -2440,12 +2424,8 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         mst.etf.reserve(6 * vertices.size() - 11);
         init_face_loop_label(mst);
 
-        // Betti number changes
-        std::vector<int> betti_1;
 
         // Vanilla MST imp
-        bettiNum_1 = 0;
-        betti_1.push_back(bettiNum_1);
         int inserted_edge = 0;
         if (true)
         {
@@ -2464,14 +2444,11 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
                 if (mst.find_edge(this_edge.first, this_edge.second) != AMGraph::InvalidEdgeID)
                     continue;
 
-                bool isValid = Vanilla_check(mst, this_edge, kdTree);
-
-                if (isValid) {
-                    bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree, edge_length[i].first, bettiNum_1);
-                    if (isAdded)
-                        betti_1.push_back(bettiNum_1);
+                if (bool isValid = Vanilla_check(mst, this_edge, kdTree)) {
+                    bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree, edge_length[i].first);
                 }
             }
+            // TODO: does this do anything
             showProgressBar(1.0);
             std::cout << std::endl;
         }
@@ -2482,12 +2459,11 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
         if (opts.genus != 0) {
             mst.isFinal = true;
             std::vector<NodeID> connected_handle_root;
-            connect_handle(smoothed_v, kdTree, mst, connected_handle_root, betti_1, opts.k, opts.n, opts.isEuclidean, bettiNum_1);
+            connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.isEuclidean);
             opts.isFaceLoop = false;
-            triangulate(faces, mst, kdTree, opts.isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root, betti_1, bettiNum_1);
+            triangulate(faces, mst, kdTree, opts.isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root);
         }
 
-        betti_1.push_back(bettiNum_1);
         ::HMesh::Manifold res;
         // Extract vertex position
         std::vector<double> pos;
