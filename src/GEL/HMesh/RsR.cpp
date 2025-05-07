@@ -1,26 +1,9 @@
-#include <sstream>
 #include "RsR.h"
-static bool isGTNormal = true;
-static bool isEuclidean = true;
-static bool isFaceLoop = true;
-static bool isDebug = false;
-static bool isNoiseExperiment = false;
-static int k = 30;
-static double r = 20.;
-static double theta = 60.;
-static int step_thresh = 50;
-static int exp_genus = -1;
-static std::string model_path;
-static std::string root_path;
-static std::string model_name;
-static std::string mode;
-static RsR_Timer recon_timer;
-static int bettiNum_1 = 0;
-
+#include <GEL/HMesh/Timer.h>
 
 struct m_cmp {
     bool operator()(const std::pair<std::vector<NodeID>, float>& left,
-        const std::pair<std::vector<NodeID>, float>& right) {
+        const std::pair<std::vector<NodeID>, float>& right) const {
         return (left.second) > (right.second);
     }
 };
@@ -43,8 +26,12 @@ inline bool neighbor_comparator(const m_neighbor_pair& l, const m_neighbor_pair&
     return l.first > r.first;
 }
 
-void remove_duplicate_vertices(std::vector<Point>& vertices,
-    std::vector<Vector>& normals, Tree& kdTree) {
+void remove_duplicate_vertices(
+    std::vector<Point>& vertices,
+    std::vector<Vector>& normals,
+    const Tree& kdTree,
+    const int k)
+{
     std::vector<Point> new_vertices;
     std::vector<Vector> new_normals;
     double last_dist = INFINITY;
@@ -80,7 +67,7 @@ void remove_duplicate_vertices(std::vector<Point>& vertices,
         
         if (isInsert) {
             new_vertices.push_back(vertex);
-            if (normals.size() != 0)
+            if (!normals.empty())
                 new_normals.push_back(normals[this_idx]);
         }
         this_idx++;
@@ -88,7 +75,6 @@ void remove_duplicate_vertices(std::vector<Point>& vertices,
     std::cout << removed << " duplicate vertices removed." << std::endl;
     vertices = new_vertices;
     normals = new_normals;
-    return;
 }
 /**
     * @brief Clamp the value between the upper and lower bound
@@ -99,7 +85,7 @@ void remove_duplicate_vertices(std::vector<Point>& vertices,
     *
     * @return clamped value
     */
-double clamp(double value, double upper_bound, double lower_bound) {
+double clamp(const double value, const double upper_bound, const double lower_bound) {
     double output = value;
     if (output > upper_bound)
         output = upper_bound;
@@ -117,7 +103,7 @@ double clamp(double value, double upper_bound, double lower_bound) {
     * @return None
     */
 void calculate_ref_vec(const Vector& normal, Vector& ref_vec) {
-    float eps = 1e-6;
+    constexpr float eps = 1e-6;
     float second = normal[1];
     if (second == 0.)
         second += eps;
@@ -125,7 +111,6 @@ void calculate_ref_vec(const Vector& normal, Vector& ref_vec) {
     if (normal[2] == 1.)
         ref_vec = Vector(0., 1., 0.);
     ref_vec /= ref_vec.length();
-    return;
 }
 
 /**
@@ -140,7 +125,7 @@ double cal_radians_3d(const Vector& branch_vec, const Vector& normal) {
     Vector proj_vec = branch_vec - dot(normal, branch_vec) /
         normal.length() * normal;
 
-    Vector ref_vec = Vector(0, 0, 0);
+    auto ref_vec = Vector(0, 0, 0);
     calculate_ref_vec(normal, ref_vec);
 
     if (proj_vec.length() == 0.0)
@@ -193,7 +178,7 @@ double cal_radians_3d(const Vector& branch_vec, const Vector& normal, const Vect
 }
 
 //TODO: adapt kdtree
-void build_KDTree(Tree& kdTree, std::vector<Point> vertices, std::vector<NodeID> indices) {
+void build_KDTree(Tree& kdTree, const std::vector<Point>& vertices, const std::vector<NodeID>& indices) {
     int idx = 0;
     for (const auto& vertex : vertices) {
         kdTree.insert(vertex, indices[idx]);
@@ -220,8 +205,7 @@ void kNN_search(const Point& query, const Tree& kdTree,
     std::vector<double>& neighbor_distance, double last_dist, bool isContain) {
     if (!isContain)
         num -= 1;
-    std::vector<Record> records;
-    records = kdTree.m_closest(num + 1, query, INFINITY);
+    std::vector<Record> records = kdTree.m_closest(num + 1, query, INFINITY);
 
     // Sort to the normal order from heap
     for (size_t i = records.size(); i > 0; --i) {
@@ -238,7 +222,6 @@ void kNN_search(const Point& query, const Tree& kdTree,
         neighbor_distance.push_back(std::sqrt(record.d));
         idx++;
     }
-    return;
 }
 
 /**
@@ -274,7 +257,6 @@ void NN_search(const Point& query, const Tree& kdTree,
         neighbor_dist[i] = paired[i].first;
         neighbors[i] = paired[i].second;
     }
-    return;
 }
 
 
@@ -300,7 +282,12 @@ float find_components(std::vector<Point>& vertices,
     std::vector<std::vector<Point>>& component_smoothed_v,
     std::vector<Vector>& normals,
     std::vector<std::vector<Vector>>& component_normals,
-    const Tree& kdTree, float cross_conn_thresh, float outlier_thresh) {
+    const Tree& kdTree,
+    float cross_conn_thresh,
+    float outlier_thresh,
+    int k,
+    bool isEuclidean)
+{
 
     double avg_edge_length = 0;
     AMGraph::NodeSet sets;
@@ -413,7 +400,7 @@ float find_components(std::vector<Point>& vertices,
     
     components_vec = connected_components(components, sets);
 
-    int num = components_vec.size();
+    const auto num = components_vec.size();
     std::cout << "The input contains " << num << " connected components." << std::endl;
 
     // Valid Components and create new vectors for components
@@ -482,9 +469,18 @@ float cal_proj_dist(const Vector& edge, const Vector& this_normal, const Vector&
     *
     * @return None
     */
-void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& smoothed_v,
-    const std::vector<Vector>& normals, const Tree& kdTree, SimpGraph& dist_graph,
-    std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh) {
+void init_graph(
+    const std::vector<Point>& vertices,
+    const std::vector<Point>& smoothed_v,
+    const std::vector<Vector>& normals,
+    const Tree& kdTree,
+    SimpGraph& dist_graph,
+    std::vector<float>& max_length,
+    std::vector<float>& pre_max_length,
+    const float cross_conn_thresh,
+    int k,
+    bool isEuclidean)
+{
     for (int i = 0; i < vertices.size(); i++) {
         dist_graph.add_node();
     }
@@ -519,7 +515,7 @@ void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& sm
                     temp.push_back(idx);
                 }
             }
-            if (temp.size() == 0)
+            if (temp.empty())
                 std::cout << "Bad normal input" << std::endl;
             else {
                 neighbors.clear();
@@ -527,8 +523,7 @@ void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& sm
             }
         }
 
-        for (int j = 0; j < neighbors.size(); j++) {
-            NodeID idx = neighbors[j];
+        for (const unsigned long idx : neighbors) {
             if (dist_graph.find_edge(i, idx) != AMGraph::InvalidEdgeID)
                 continue;
             if (idx == i) {
@@ -548,13 +543,12 @@ void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& sm
             if (weight > max_length[idx])
                 max_length[idx] = weight;
             if (weight < 1e-8)
-                std::cout << "error" << std::endl;
+                std::cout << "error" << std::endl; // TODO: this is a bit silly
 
             dist_graph.connect_nodes(i, idx, weight);
         }
         i++;
     }
-    return;
 }
 
 /**
@@ -697,12 +691,13 @@ void weighted_smooth(const std::vector<Point>& vertices,
 
 void estimate_normal(const std::vector<Point>& vertices,
     const Tree& kdTree, std::vector<Vector>& normals, std::vector<NodeID>& zero_normal_id,
-    float& diagonal_length) {
+    float& diagonal_length, const bool isGTNormal) {
 
     if (!isGTNormal)
         normals.clear();
     int neighbor_num = std::max<int>(int(vertices.size() / 2000.), 192);
     // Data type transfer & Cal diagonal size
+    // TODO: two vectors allocated for two 12 byte arrays
     std::vector<float> min{ INFINITY, INFINITY, INFINITY },
         max{ -INFINITY, -INFINITY, -INFINITY };
     NodeID idx = 0;
@@ -755,8 +750,6 @@ void estimate_normal(const std::vector<Point>& vertices,
     }
     Point min_p(min[0], min[1], min[2]), max_p(max[0], max[1], max[2]);
     diagonal_length = (max_p - min_p).length();
-
-    return;
 }
 
 /**
@@ -806,7 +799,7 @@ float cal_angle_based_weight(const Vector& this_normal, const Vector& neighbor_n
 }
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root,
-    RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices)
+    RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices, bool isEuclidean)
 {
     using QElem = std::tuple<double, NodeID, NodeID>;
     if (root == AMGraph::InvalidNodeID)
@@ -852,7 +845,8 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root,
     return;
 }
 
-void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn) {
+void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
+{
     using NodeID = NodeID;
     using QElem = std::tuple<double, NodeID, NodeID>;
     if (root == AMGraph::InvalidNodeID)
@@ -883,8 +877,6 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn) {
             }
         }
     }
-
-    return;
 }
 
 /**
@@ -895,8 +887,12 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn) {
     *
     * @return None
     */
-void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
-    Tree& kdTree, std::vector<Vector>& normals) {
+void correct_normal_orientation(
+    std::vector<Point>& in_smoothed_v,
+    Tree& kdTree,
+    std::vector<Vector>& normals,
+    int k)
+{
     SimpGraph g_angle;
     AMGraph::NodeSet sets;
     //RSGraph g_angle;
@@ -974,7 +970,6 @@ void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
             }
         }
     }
-    return;
 }
 
 /**
@@ -1328,7 +1323,7 @@ const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const No
     return (*iter);
 }
 
-void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target) {
+void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target, int& bettiNum_1) {
     auto this_v_tree = predecessor(g, source, target).tree_id;
     auto neighbor_tree = predecessor(g, target, source).tree_id;
 
@@ -1339,7 +1334,6 @@ void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target) {
     get_neighbor_info(g, target, source).tree_id = v;
 
     bettiNum_1++;
-    return;
 }
 
 bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle) {
@@ -1390,7 +1384,7 @@ bool routine_check(RSGraph& mst, std::vector<NodeID>& triangle) {
 
 
 void add_face(RSGraph& G, std::vector<NodeID>& item,
-    std::vector<std::vector<NodeID>>& faces) {
+    std::vector<std::vector<NodeID>>& faces, int& bettiNum_1) {
     NodeID v_i = item[0];
     NodeID v_u = item[1];
     NodeID v_w = item[2];
@@ -1407,11 +1401,10 @@ void add_face(RSGraph& G, std::vector<NodeID>& item,
     G.m_edges[G.find_edge(v_u, v_i)].ref_time += 1;
     faces.push_back(item);
     bettiNum_1--;
-    return;
 }
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<NodeID>>& faces,
-    Tree& KDTree, float edge_length) {
+    Tree& KDTree, float edge_length, int& bettiNum_1) {
 
     Vector v1_n = mst.m_vertices[v1].normal;
     Vector v2_n = mst.m_vertices[v2].normal;
@@ -1425,7 +1418,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     find_common_neighbor(v1, v2, share_neighbors, mst);
     if (share_neighbors.size() == 0) {
         mst.add_edge(v1, v2, edge_length);
-        maintain_face_loop(mst, v1, v2);
+        maintain_face_loop(mst, v1, v2, bettiNum_1);
         return true;
     }
     //if ((v1 == 30045 && v2 == 69461) || v1 == 69461 && v2 == 30045)
@@ -1491,10 +1484,10 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     if (isValid) {
         AMGraph::EdgeID added_edge = mst.add_edge(v1, v2,
             edge_length);
-        maintain_face_loop(mst, v1, v2);
+        maintain_face_loop(mst, v1, v2, bettiNum_1);
         for (auto& face : temp) {
             ;
-            add_face(mst, face, faces);
+            add_face(mst, face, faces, bettiNum_1);
         }
     }
 
@@ -1551,7 +1544,11 @@ void export_obj(std::vector<Point>& in_vertices, RSGraph& g, std::string out_pat
     */
 void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
     RSGraph& mst, std::vector<NodeID>& connected_handle_root,
-    std::vector<int>& betti) {
+    std::vector<int>& betti,
+    int k,
+    int step_thresh,
+    bool isEuclidean,
+    int& bettiNum_1) {
 
     std::vector<NodeID> imp_node;
     int num = 0;
@@ -1560,7 +1557,7 @@ void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
     {
         for (int i = 0; i < mst.no_nodes(); i++) {
             std::set<Neighbor>& neighbors = mst.m_vertices[i].ordered_neighbors;
-            float last_angle = (*(--neighbors.end())).angle;
+            float last_angle = (--neighbors.end())->angle;
             float this_angle;
 
             for (auto& neighbor : neighbors) {
@@ -1696,7 +1693,6 @@ void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
     std::cout << "Handle Connection done :)" << std::endl;
     std::cout << std::to_string(num) << " pairs of faces are connected." << std::endl;
     std::cout << std::to_string(edge_num) << " edges are connected." << std::endl;
-    return;
 }
 
 void export_edges(RSGraph& g, std::vector<NodeID>& roots, std::string out_path) {
@@ -1717,7 +1713,6 @@ void export_edges(RSGraph& g, std::vector<NodeID>& roots, std::string out_path) 
         file << "l " << i + 1
         << " " << i + 2 << std::endl;
     file.close();
-    return;
 }
 
 bool explore(RSGraph& G, int i, m_priority_queue& queue,
@@ -1988,10 +1983,18 @@ void checkAndForce(NodeID v_u, NodeID v_w, RSGraph& G, m_priority_queue& queue,
     return;
 }
 
-void triangulate(std::vector<std::vector<NodeID>>& faces, RSGraph& G,
-    const Tree& KDTree, bool isFaceLoop, bool isEuclidean
-    , std::vector<float>& length_thresh, std::vector<NodeID>& connected_handle_root,
-    std::vector<int>& betti, bool isFinalize = false) {
+void triangulate(
+    std::vector<std::vector<NodeID>>& faces,
+    RSGraph& G,
+    const Tree& KDTree,
+    bool isFaceLoop,
+    bool isEuclidean,
+    std::vector<float>& length_thresh,
+    std::vector<NodeID>& connected_handle_root,
+    std::vector<int>& betti,
+    int& bettiNum_1,
+    bool isFinalize = false)
+{
 
     std::unordered_set<std::string> faces_in_queue;
     std::unordered_set<NodeID> to_visit;
@@ -2061,7 +2064,7 @@ void triangulate(std::vector<std::vector<NodeID>>& faces, RSGraph& G,
 
                 bettiNum_1++;
 
-                add_face(G, item.first, faces);
+                add_face(G, item.first, faces, bettiNum_1);
 
                 betti.push_back(bettiNum_1);
             }
@@ -2085,7 +2088,7 @@ void triangulate(std::vector<std::vector<NodeID>>& faces, RSGraph& G,
                     if (time1 == 2 || time2 == 2 || time3 == 2)
                         continue;
 
-                    add_face(G, face, faces);
+                    add_face(G, face, faces, bettiNum_1);
                 }
             }
 
@@ -2110,6 +2113,7 @@ void triangulate(std::vector<std::vector<NodeID>>& faces, RSGraph& G,
             NodeID pick = *to_visit.begin();
             to_visit.erase(pick);
             bool result = explore(G, pick, queue, faces_in_queue, avg_edge_length, length_thresh);
+            // TODO: result is dropped?
         }
     }
 }
@@ -2125,15 +2129,21 @@ void triangulate(std::vector<std::vector<NodeID>>& faces, RSGraph& G,
  *
  * @return None
  */
-void build_mst(SimpGraph& g, NodeID root,
-    RSGraph& out_mst, std::vector<Vector>& normals, std::vector<Point>& vertices) {
+void build_mst(
+    SimpGraph& g,
+    NodeID root,
+    RSGraph& out_mst,
+    std::vector<Vector>& normals,
+    std::vector<Point>& vertices,
+    const bool isEuclidean)
+{
 
     //SimpGraph mst_temp;
     //for (int i = 0; i < mst.no_nodes(); i++) {
     //    mst_temp.add_node();
     //}
     RSGraph temp;
-    minimum_spanning_tree(g, root, temp, normals, vertices);
+    minimum_spanning_tree(g, root, temp, normals, vertices, isEuclidean);
 
     // Fix strong ambiguous points
     if (!isEuclidean) {
@@ -2204,7 +2214,6 @@ void build_mst(SimpGraph& g, NodeID root,
             out_mst.add_edge(temp.m_edges[i].source,
                 temp.m_edges[i].target, projection_dist);
     }
-    return;
 }
 
 /**
@@ -2218,19 +2227,25 @@ void build_mst(SimpGraph& g, NodeID root,
     */
 void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertices,
     std::vector<Vector>& org_normals, bool in_isEuclidean, int in_genus, 
-    int in_k, int in_r, int in_theta, int in_n) {
-    isEuclidean = in_isEuclidean;
-    exp_genus = in_genus;
-    k = in_k;
-    r = in_r;
-    theta = in_theta;
-    step_thresh = in_n;
-    //std::cout << exp_genus << std::endl;
-    //std::cout << k << std::endl;
-    //std::cout << r << std::endl;
-    //std::cout << theta << std::endl;
-    //std::cout << step_thresh << std::endl;
-    //std::cout << org_vertices[0] << std::endl;
+    int in_k, int in_r, int in_theta, int in_n)
+{
+    Timer recon_timer;
+    int bettiNum = 0; // what does this do
+    int& bettiNum_1 = bettiNum;
+    RsROpts opts = {
+        .genus = in_genus,
+        .k = in_k,
+        .r = in_r,
+        .theta = in_theta,
+        .n = in_n, // step_threshold
+        .isEuclidean = in_isEuclidean,
+    };
+    /*std::cout << exp_genus << std::endl;
+    std::cout << k << std::endl;
+    std::cout << r << std::endl;
+    std::cout << theta << std::endl;
+    std::cout << step_thresh << std::endl;
+    std::cout << org_vertices[0] << std::endl;*/
 
     recon_timer.create("Whole process");
     recon_timer.create("Initialization");
@@ -2240,7 +2255,9 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
     recon_timer.create("Build Rotation System");
     recon_timer.create("algorithm");
 
+    recon_timer.start("Whole process");
     recon_timer.start("Initialization");
+
     // Estimate normals & orientation & weighted smoothing
     recon_timer.start("Estimate normals");
     std::vector<Point> in_smoothed_v;
@@ -2251,31 +2268,30 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
         Tree kdTree, tree_before_remove;
         build_KDTree(tree_before_remove, org_vertices, indices);
 
-        remove_duplicate_vertices(org_vertices, org_normals, tree_before_remove);
+        remove_duplicate_vertices(org_vertices, org_normals, tree_before_remove, opts.k);
 
-        indices.clear();
-        indices = std::vector<NodeID>(org_vertices.size());
-        std::iota(indices.begin(), indices.end(), 0);
         build_KDTree(kdTree, org_vertices, indices);
 
-
+        //
         float diagonal_length;
 
-        if (org_normals.size() == 0) {
-            isGTNormal = false;
+        // TODO: move this to the top
+        if (org_normals.empty()) {
+            opts.isGTNormal = false;
         }
 
         std::vector<NodeID> zero_normal_id;
-        estimate_normal(org_vertices, kdTree, org_normals, zero_normal_id, diagonal_length);
+        estimate_normal(org_vertices, kdTree, org_normals, zero_normal_id, diagonal_length, opts.isGTNormal);
 
         // Fix zero normal
-        if (zero_normal_id.size() > 0) {
+        if (!zero_normal_id.empty()) {
+            // TODO: should probably not be throwing a stringly typed runtime_error here
             throw std::runtime_error("Zero normal exists!");
         }
 
         if (true) {
             std::cout << "Start first round smoothing ..." << std::endl;
-            if (!isEuclidean)
+            if (!opts.isEuclidean)
                 weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree, diagonal_length);
             else
                 in_smoothed_v = org_vertices;
@@ -2284,13 +2300,18 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
             build_KDTree(temp_tree1, in_smoothed_v, indices);
 
             estimate_normal(in_smoothed_v, temp_tree1, org_normals,
-                zero_normal_id, diagonal_length);
+                zero_normal_id, diagonal_length, opts.isGTNormal);
 
             // Another round of smoothing
             if (true) {
-                if (!isEuclidean) {
+                if (!opts.isEuclidean) {
                     std::cout << "Start second round smoothing ..." << std::endl;
-                    std::vector<Point> temp(in_smoothed_v.begin(), in_smoothed_v.end());
+                    // Pointlessly copies in_smoothed_v to a new array, and then deletes all the elements
+                    std::vector<Point> temp;
+                    temp.reserve(in_smoothed_v.size());
+                    std::swap(temp, in_smoothed_v);
+                    //std::vector<Point> temp(in_smoothed_v.begin(), in_smoothed_v.end());
+                    //std::vector<Point> temp = std::move(in_smoothed_v);
                     in_smoothed_v.clear();
                     weighted_smooth(temp, in_smoothed_v, org_normals, temp_tree1, diagonal_length);
 
@@ -2298,7 +2319,7 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
                     build_KDTree(temp_tree2, in_smoothed_v, indices);
 
                     estimate_normal(in_smoothed_v, temp_tree2, org_normals,
-                        zero_normal_id, diagonal_length);
+                        zero_normal_id, diagonal_length, opts.isGTNormal);
                 }
             }
         }
@@ -2311,6 +2332,12 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
 
     recon_timer.start("algorithm");
     // Find components
+    struct Components
+    {
+        Vec3d pos;
+        Vec3d normal;
+    };
+
     std::vector<std::vector<Point>> component_vertices;
     std::vector<std::vector<Point>> component_smoothed_v;
     std::vector<std::vector<Vector>> component_normals;
@@ -2325,19 +2352,19 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
 
         // Correct orientation
         // 
-        // TODO: Seems not considerring the number of connected components when correct orientation!!!
+        // TODO: Seems not to be considering the number of connected components when the orientation is correct.
 
         std::cout << "correct normal orientation" << std::endl;
 
-        if (!isGTNormal) {
-            correct_normal_orientation(in_smoothed_v, kdTree, org_normals);
+        if (!opts.isGTNormal) {
+            correct_normal_orientation(in_smoothed_v, kdTree, org_normals, opts.k);
         }
 
         std::cout << "find components" << std::endl;
-
+        // Identifies clusters of vertices which are reconstructed to disparate meshes
         find_components(org_vertices, component_vertices, in_smoothed_v,
             component_smoothed_v, org_normals, component_normals, kdTree,
-            theta, r);
+            opts.theta, opts.r, opts.k, opts.isEuclidean);
 
         in_smoothed_v.clear();
     }
@@ -2345,7 +2372,7 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
     for (int component_id = 0; component_id < component_vertices.size(); component_id++) {
         std::cout << "Reconstructing component " + std::to_string(component_id) + " ..." << std::endl;
 
-        isFaceLoop = true;
+        opts.isFaceLoop = true;
 
         std::vector<std::vector<NodeID>> faces;
         std::vector<Point> vertices = component_vertices[component_id];
@@ -2370,16 +2397,16 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
         std::vector<m_Edge_length> edge_length;
         std::vector<float> connection_max_length(vertices.size(), 0.);
         std::vector<float> pre_max_length(vertices.size(), 0.);
-        mst.isEuclidean = isEuclidean;
-        mst.exp_genus = exp_genus;
+        mst.isEuclidean = opts.isEuclidean;
+        mst.exp_genus = opts.genus;
         {
             SimpGraph g;
             init_graph(smoothed_v, smoothed_v, normals,
                 kdTree, g, connection_max_length,
-                pre_max_length, theta);
+                pre_max_length, opts.theta, opts.k, opts.isEuclidean);
 
             // Generate MST
-            build_mst(g, 0, mst, normals, smoothed_v);
+            build_mst(g, 0, mst, normals, smoothed_v, opts.isEuclidean);
 
             // Edge arrays and sort
             if (true) {
@@ -2389,7 +2416,7 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
                             Vector edge = smoothed_v[node] - smoothed_v[node_neighbor];
                             double len = edge.length();
 
-                            if (!isEuclidean) {
+                            if (!opts.isEuclidean) {
                                 len = cal_proj_dist(edge, normals[node], normals[node_neighbor]);
                             }
 
@@ -2423,7 +2450,7 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
             for (int i = 0; i < edge_length.size(); i++) {
                 if (i % 100000 == 0) {
                     //std::cout << "Step " << i << " / " << edge_length.size() << std::endl;
-                    showProgressBar(i / float(edge_length.size()));
+                    showProgressBar(i / static_cast<float>(edge_length.size()));
                 }
                 unsigned int edge_idx = edge_length[i].second;
                 m_Edge this_edge = full_edges[edge_idx];
@@ -2437,7 +2464,7 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
                 bool isValid = Vanilla_check(mst, this_edge, kdTree);
 
                 if (isValid) {
-                    bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree, edge_length[i].first);
+                    bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree, edge_length[i].first, bettiNum_1);
                     if (isAdded)
                         betti_1.push_back(bettiNum_1);
                 }
@@ -2449,12 +2476,12 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
 
         //std::vector<std::vector<NodeID>> mesh_before = faces;
         // Create handles & Triangulation
-        if (exp_genus != 0) {
+        if (opts.genus != 0) {
             mst.isFinal = true;
             std::vector<NodeID> connected_handle_root;
-            connect_handle(smoothed_v, kdTree, mst, connected_handle_root, betti_1);
-            isFaceLoop = false;
-            triangulate(faces, mst, kdTree, isFaceLoop, isEuclidean, connection_max_length, connected_handle_root, betti_1);
+            connect_handle(smoothed_v, kdTree, mst, connected_handle_root, betti_1, opts.k, opts.n, opts.isEuclidean, bettiNum_1);
+            opts.isFaceLoop = false;
+            triangulate(faces, mst, kdTree, opts.isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root, betti_1, bettiNum_1);
         }
 
         betti_1.push_back(bettiNum_1);
@@ -2469,10 +2496,10 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
 
         std::vector<int> mesh_faces(faces.size(), 3);
         std::vector<int> flattened_face;
-        for (int i = 0; i < faces.size(); i++) {
-            flattened_face.push_back(faces[i][0]);
-            flattened_face.push_back(faces[i][1]);
-            flattened_face.push_back(faces[i][2]);
+        for (auto & face : faces) {
+            flattened_face.push_back(face[0]);
+            flattened_face.push_back(face[1]);
+            flattened_face.push_back(face[2]);
         }
 
         HMesh::build(res, mst.no_nodes(), &pos[0], faces.size(),
@@ -2481,9 +2508,8 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
     }
 
     recon_timer.end("algorithm");
+    recon_timer.end("Whole process");
     std::string line(40, '=');
     std::cout << line << std::endl << std::endl;
     recon_timer.show();
-
-    return;
 }

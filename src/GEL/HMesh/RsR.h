@@ -1,17 +1,14 @@
-#ifndef RsR_hpp
-#define RsR_hpp
+#ifndef GEL_HMesh_RsR_hpp
+#define GEL_HMesh_RsR_hpp
 #pragma once
 
-#include <iostream>
-#include <fstream>
-#include <chrono>
+// TODO: unnecessary imports will negatively affect compile times
 #include <random>
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
 #include <GEL/Geometry/Graph.h>
 #include <GEL/HMesh/Manifold.h>
-#include <GEL/HMesh/obj_load.h>
 #include <GEL/Geometry/etf.h>
 #include <GEL/Geometry/KDTree.h>
 #include <GEL/Geometry/normal.h>
@@ -21,7 +18,7 @@ using namespace Geometry;
 using uint = unsigned int;
 using NodeID = AMGraph::NodeID;
 
-typedef CGLA::Vec3d Vector;
+typedef Vec3d Vector;
 using Point = Vector;
 typedef std::pair<NodeID, NodeID> m_Edge;
 
@@ -30,8 +27,23 @@ double cal_radians_3d(const Vector& branch, const Vector& normal);
 double cal_radians_3d(const Vector& branch_vec, const Vector& normal,
     const Vector& ref_vec);
 
-/*Graph definition. The RsR graph here is integrated with rotation system based on AMGraph*/
+///
+/// TODO: documentation
+struct RsROpts
+{
+    int genus = -1;
+    int k = 70;
+    int r = 20;
+    int theta = 60;
+    int n = 50;
+    bool isEuclidean = false;
+    /// Are normals included with the input?
+    bool isGTNormal = true;
+    bool isFaceNormal = true;
+    bool isFaceLoop = true;
+};
 
+/*Graph definition. The RsR graph here is integrated with the rotation system based on AMGraph*/
 struct Vertex {
     int id = 0;
     int normal_rep = -1;
@@ -39,7 +51,7 @@ struct Vertex {
     Vector coords = Vector(0., 0., 0.);
     Vector normal = Vector(0., 0., 0.);
     std::vector<bool> faceExist;
-    float distance;
+    float distance = 0.0f;
     struct Neighbor {
         double angle;
         uint v;
@@ -62,7 +74,7 @@ struct Vertex {
             return this->angle < rhs.angle || this->angle == rhs.angle && this->v != rhs.v;
         }
     };
-
+    // TODO: mutable elements inside std::set is potentially unsound
     std::set<Neighbor> ordered_neighbors;
 };
 
@@ -88,8 +100,7 @@ public:
     }
 
     double get_weight(NodeID n1, NodeID n2) const {
-        double output = m_edges[find_edge(n1, n2)].weight;
-        return output;
+        return m_edges[find_edge(n1, n2)].weight;
     }
 
     /** Disconnect nodes. This operation removes the edge from the edge maps of the two formerly connected
@@ -137,14 +148,12 @@ public:
             edge_map[target].erase(source);
         }
         current_no_edges--;
-        return;
     }
 
     void remove_neighbor(NodeID root, NodeID neighbor) {
         auto& u = m_vertices[root];
         auto& v = m_vertices[neighbor];
         u.ordered_neighbors.erase(Neighbor(u, v, neighbor));
-        return;
     }
 
     void insert_neighbor(NodeID root, NodeID neighbor) {
@@ -152,7 +161,6 @@ public:
         const auto& v = m_vertices[neighbor];
         m_vertices[root].ordered_neighbors.insert(Neighbor(u, v, neighbor));
         //std::cout << Neighbor(u, v, neighbor).angle << std::endl;
-        return;
     }
 
     EdgeID add_edge(NodeID source, NodeID target, float weight = 0.) {
@@ -201,7 +209,7 @@ public:
         return n;
     }
 
-    void init(const std::vector<Point>& vertices, const std::vector<Vector> normals) {
+    void init(const std::vector<Point>& vertices, const std::vector<Vector>& normals) {
         for (int i = 0; i < vertices.size(); i++) {
             NodeID id = this->add_node(vertices[i]);
             m_vertices[id].normal = normals[i];
@@ -209,8 +217,8 @@ public:
     }
 
     void init(const std::vector<Point>& vertices) {
-        for (int i = 0; i < vertices.size(); i++) {
-            this->add_node(vertices[i]);
+        for (const auto & vertice : vertices) {
+            this->add_node(vertice);
         }
     }
 
@@ -224,7 +232,6 @@ public:
         for (NodeID i = 0; i < edge_map.size(); i++) {
             sets.insert(i);
         }
-        return;
     }
 };
 
@@ -238,14 +245,21 @@ void kNN_search(const Point&, const Tree&, int,
 void NN_search(const Point&, const Tree&, double,
     std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
 
-float find_components(std::vector<Point>&,
-    std::vector<std::vector<Point>>&, std::vector<Point>&,
-    std::vector<std::vector<Point>>&, std::vector<Vector>&,
-    std::vector<std::vector<Vector>>&, const Tree&, float, float);
+float find_components(std::vector<Point>& vertices,
+    std::vector<std::vector<Point>>& component_vertices,
+    std::vector<Point>& smoothed_v,
+    std::vector<std::vector<Point>>& component_smoothed_v,
+    std::vector<Vector>& normals,
+    std::vector<std::vector<Vector>>& component_normals,
+    const Tree& kdTree,
+    float cross_conn_thresh,
+    float outlier_thresh,
+    int k,
+    bool isEuclidean);
 
 void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& smoothed_v,
     const std::vector<Vector>& normals, const Tree& kdTree, SimpGraph& dist_graph,
-    std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh);
+    std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh, int k, bool isEuclidean);
 
 int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target,
     int threshold, std::vector<NodeID>& path);
@@ -256,92 +270,27 @@ void weighted_smooth(const std::vector<Point>& vertices,
 
 void estimate_normal(const std::vector<Point>& vertices,
     const Tree& kdTree, std::vector<Vector>& normals,
-    std::vector<NodeID>& zero_normal_id, float& diagonal_length);
+    std::vector<NodeID>& zero_normal_id, float& diagonal_length, bool isGTNormal);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root,
-    RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices);
+    RSGraph& gn, std::vector<Vector>& normals, std::vector<Point>& vertices, bool isEuclidean);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
 void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
-    Tree& kdTree, std::vector<Vector>& normals);
+    Tree& kdTree, std::vector<Vector>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
-    Tree& KDTree, float edge_length);
+    Tree& KDTree, float edge_length, int& bettiNum_1);
 
 void add_face(RSGraph& G, std::vector<NodeID>& item,
-    std::vector<std::vector<NodeID>>& faces);
+    std::vector<std::vector<NodeID>>& faces, int& bettiNum_1);
 
 void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
     RSGraph& mst, std::vector<NodeID>& connected_handle_root,
-    std::vector<int>& betti);
-
-// Timer
-
-class RsR_Timer {
-public:
-    RsR_Timer() {
-
-    }
-    std::vector<long> times;
-    std::vector<std::string> descriptions;
-    std::vector<std::chrono::high_resolution_clock::time_point> starts;
-    std::vector<std::chrono::high_resolution_clock::time_point> ends;
-
-    void create(std::string name) {
-        times.push_back(0);
-        descriptions.push_back(name);
-        //idx_map.insert(std::pair<std::string, int>(name, times.size() - 1));
-        starts.push_back(std::chrono::high_resolution_clock::now());
-        ends.push_back(std::chrono::high_resolution_clock::now());
-    }
-
-    void start(std::string name) {
-        //int idx = idx_map[name];
-        int idx = -1;
-        for (int i = 0; i < descriptions.size(); i++) {
-            if (descriptions[i] == name) {
-                idx = i;
-                break;
-            }
-        }
-        starts[idx] = std::chrono::high_resolution_clock::now();
-    }
-
-    void end(std::string name) {
-        //int idx = idx_map[name];
-        int idx = -1;
-        for (int i = 0; i < descriptions.size(); i++) {
-            if (descriptions[i] == name) {
-                idx = i;
-                break;
-            }
-        }
-        ends[idx] = std::chrono::high_resolution_clock::now();
-        times[idx] +=
-            std::chrono::duration_cast<std::chrono::seconds>(ends[idx] - starts[idx]).count();
-    }
-
-    void show() {
-        std::cout << "Time Statistics" << std::endl;
-        std::cout << std::string(20, '=') << std::endl;
-        for (int i = 0; i < times.size(); i++) {
-            std::cout << "Spent " << double(times[i])
-                << " seconds on " << descriptions[i] << std::endl;
-        }
-    }
-
-    long log(std::string name) {
-        int idx = -1;
-        for (int i = 0; i < descriptions.size(); i++) {
-            if (descriptions[i] == name) {
-                idx = i;
-                break;
-            }
-        }
-        return times[idx];
-    }
-};
+    std::vector<int>& betti, int k,
+    int step_thresh, bool isEuclidean,
+    int& bettiNum_1);
 
 // Face Loop
 
@@ -357,7 +306,7 @@ const Neighbor& predecessor(const RSGraph& g,
     const NodeID& branch);
 
 void maintain_face_loop(RSGraph& g,
-    const NodeID source, const NodeID target);
+    const NodeID source, const NodeID target, int& bettiNum_1);
 
 const Neighbor& get_neighbor_info(const RSGraph& g,
     const NodeID& root, const NodeID& branch);
@@ -387,4 +336,4 @@ void reconstruct_single(HMesh::Manifold& output, std::vector<Point>& org_vertice
     std::vector<Vector>& org_normals, bool in_isEuclidean = false, int in_genus = -1,
     int in_k = 70, int in_r = 20, int in_theta = 60, int in_n = 50);
 
-#endif
+#endif // GEL_HMesh_RsR_hpp

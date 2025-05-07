@@ -1,5 +1,5 @@
 #include <GEL/HMesh/RsR2.h>
-#include <GEL/HMesh/RsRTimer.h>
+#include <GEL/HMesh/Timer.h>
 
 namespace GEL::HMesh::RSR
 {
@@ -12,8 +12,8 @@ struct m_cmp {
 };
 
 using m_priority_queue = std::priority_queue<std::pair<std::vector<NodeID>, float>,
-                            std::vector<std::pair<std::vector<NodeID>, float>>,
-                            m_cmp>;
+                                             std::vector<std::pair<std::vector<NodeID>, float>>,
+                                             m_cmp>;
 
 using m_Edge_length = std::pair<float, int>;
 using m_face_pair = std::pair<int, std::string>;
@@ -42,12 +42,12 @@ inline bool neighbor_comparator(const m_neighbor_pair& l, const m_neighbor_pair&
     * @param num: number of nearest neighbors to be queried
     * @param neighbors: [OUT] indices of k nearest neighbors
     * @param neighbor_distance: [OUT] corresponding distance to the query point
-    * @param isContain: does the query point itself count as a neighbor
+    * @param isContain: whether the query point itself count as a neighbor
     *
     * @return None
     */
 // TODO: We can cache search result for every point after smoothing
-template<typename DistType>
+template <typename DistType>
 void kNN_search(const Point& query, const Tree& kdTree,
                 int num, std::vector<NodeID>& neighbors,
                 std::vector<DistType>& neighbor_distance, const bool isContain)
@@ -162,7 +162,7 @@ double cal_radians_3d(const Vec3& branch, const Vec3& normal)
     const Vec3 proj_ref = ref_vec - dot(normal, ref_vec) /
         normal.length() * normal;
     const auto value = std::clamp<double>(dot(proj_vec, proj_ref) / proj_vec.length() /
-                             proj_ref.length(), -1, 1);
+                                          proj_ref.length(), -1, 1);
     double radian = std::acos(value);
     if (dot(cross(proj_vec, proj_ref), normal) > 0)
         radian = 2 * M_PI - radian;
@@ -557,7 +557,6 @@ void init_graph(
     */
 int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int threshold, std::vector<NodeID>& path)
 {
-
     std::queue<NodeID> q;
     std::vector<int> dist(mst.no_nodes(), -1); // Distance from start to each node
     std::vector<NodeID> pred(mst.no_nodes(), -1); // Predecessor array for path reconstruction
@@ -612,7 +611,7 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int thre
     * @param smoothed_v: [OUT] vertices after smoothing
     * @param normals: normal of the point cloud
     * @param kdTree: kd-tree for knn query
-    * @param tr_dist: distance container
+    * \@param tr_dist: distance container
     *
     * @return None
     */
@@ -824,7 +823,7 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     *
     * @param in_smoothed_v
     * @param kdTree
-    * @param G_angle graph whose edges have angle-based weight
+    * \@param G_angle graph whose edges have angle-based weight
     * @param normals: [OUT] normal of the point cloud with orientation corrected
     * @param k
     *
@@ -838,6 +837,8 @@ void correct_normal_orientation(
 {
     SimpGraph g_angle;
     AMGraph::NodeSet sets;
+    //sets.reserve(in_smoothed_v.size());
+
     //RSGraph g_angle;
     //g_angle.init(in_pc.vertices);
     for (int i = 0; i < in_smoothed_v.size(); i++) {
@@ -893,7 +894,7 @@ void correct_normal_orientation(
 
         std::vector<bool> visited_vertex(g_angle.no_nodes(), false);
 
-        // Start from root
+        // Start from the root
         std::queue<int> to_visit;
         to_visit.push(root);
         while (!to_visit.empty()) {
@@ -970,7 +971,6 @@ void init_face_loop_label(RSGraph& g)
     } while (current_vertex != g.m_vertices[start_v].ordered_neighbors.begin()->v || last_vertex != start_v);
 
     std::cout << "Loop step initialization finished after " + std::to_string(loop_step) + " steps." << std::endl;
-    return;
 }
 
 /**
@@ -1239,7 +1239,7 @@ bool Vanilla_check(RSGraph& mst, TEdge& candidate, Tree& kdTree)
     * @param neighbor: one vertex
     * @param root: the other vertex
     * @param share_neighbor: [OUT] common neighbors these two vertices share
-    * @param mst: tcurrent graph
+    * @param g: tcurrent graph
     *
     * @return reference to last neighbor struct
     */
@@ -1253,7 +1253,6 @@ void find_common_neighbor(NodeID neighbor, NodeID root,
     std::set_intersection(vertex_neighbor.begin(), vertex_neighbor.end(),
                           neighbor_neighbor.begin(), neighbor_neighbor.end(),
                           std::back_inserter(share_neighbor));
-    return;
 }
 
 /**
@@ -1441,40 +1440,6 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     }
 
     return isValid;
-}
-
-void export_obj(std::vector<Point>& in_vertices, RSGraph& g, std::string out_path,
-                std::vector<std::vector<NodeID>>& faces)
-{
-    std::ofstream file(out_path);
-    // Write vertices
-    file << "# List of geometric vertices" << std::endl;
-    for (int i = 0; i < in_vertices.size(); i++) {
-        Point this_coords = in_vertices[i];
-        file << "v " << std::to_string(this_coords[0])
-            << " " << std::to_string(this_coords[1])
-            << " " << std::to_string(this_coords[2]) << std::endl;
-    }
-    // Write vertex normal
-    file << std::endl;
-    file << "# List of vertex normals" << std::endl;
-    for (int i = 0; i < g.no_nodes(); i++) {
-        Vec3 this_normal = g.m_vertices[i].normal;
-        file << "vn " << std::to_string(this_normal[0])
-            << " " << std::to_string(this_normal[1])
-            << " " << std::to_string(this_normal[2]) << std::endl;
-    }
-
-    // Write faces
-    file << std::endl;
-    file << "# Polygonal face element" << std::endl;
-    for (auto face : faces) {
-        file << "f " << std::to_string(face[0] + 1)
-            << " " << std::to_string(face[1] + 1)
-            << " " << std::to_string(face[2] + 1) << std::endl;
-    }
-    file.close();
-    return;
 }
 
 /**
@@ -1864,7 +1829,7 @@ bool check_validity(RSGraph& G, std::pair<std::vector<NodeID>, float>& item,
         return false;
 
     if (!isFinalize) {
-        // Check rotation system's validity of branch nodes
+        // Check the rotation system's validity of branch nodes
         if (!check_branch_validity(G, v_i, v_u, v_w)) {
             //std::cout << v_i << std::endl;
             return false;
@@ -1928,7 +1893,6 @@ void checkAndForce(NodeID v_u, NodeID v_w, RSGraph& G, m_priority_queue& queue,
             break;
         }
     }
-    return;
 }
 
 void triangulate(
@@ -2061,8 +2025,9 @@ void triangulate(
 /**
  * @brief Build minimum spanning tree (MST)
  *
- * @param mst: [OUT] constructed MST
- * @param p: connection information of the mst
+ * @param out_mst: [OUT] constructed MST
+ * @param g: connection information of the mst
+ * @param root root node
  * @param isEuclidean: if to use Euclidean distance
  * @param vertices: coordinates of the point cloud
  * @param normals: normal of the point cloud
@@ -2152,37 +2117,15 @@ void build_mst(
     }
 }
 
-/**
-    * @brief Reconstruct a single file
-    *
-    *
-    * @return None
-    */
-void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_vertices,
-                        std::vector<Vec3>& org_normals, const RsROpts& opts)
+[[nodiscard]]
+auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<Vec3>& org_normals,
+                                 const RsROpts& opts) -> std::vector<Point>
 {
-    RsR_Timer timer;
-
-    timer
-        .create("Whole process")
-        .create("Initialization")
-        .create("Import pc")
-        .create("Estimate normals")
-        .create("Build MST")
-        .create("Build Rotation System")
-        .create("algorithm");
-
-    timer
-        .start("Whole process")
-        .start("Initialization");
-
-    // Estimate normals & orientation & weighted smoothing
-    timer.start("Estimate normals");
     std::vector<Point> in_smoothed_v;
     {
         std::vector<NodeID> indices(org_vertices.size());
         std::iota(indices.begin(), indices.end(), 0);
-        // Insert number_of_data_points in the tree
+        // Insert the number_of_data_points into the tree
         Tree kdTree, tree_before_remove;
         build_KDTree(tree_before_remove, org_vertices, indices);
 
@@ -2190,16 +2133,13 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
 
         build_KDTree(kdTree, org_vertices, indices);
 
-        //
-        float diagonal_length;
-
         if (opts.isGTNormal) {
             normalize_normals(org_normals);
         } else {
             estimate_normal_no_normals(org_vertices, kdTree, org_normals);
         }
 
-        if (true) {
+        {
             std::cout << "Start first round smoothing ..." << std::endl;
             if (!opts.isEuclidean)
                 weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree);
@@ -2234,20 +2174,25 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
                     }
                 }
             }
-        } else {
-            in_smoothed_v = org_vertices;
         }
+        // else {
+        //     in_smoothed_v = org_vertices;
+        // }
+        return in_smoothed_v;
     }
-    timer.end("Estimate normals");
-    timer.end("Initialization");
+}
 
-    timer.start("algorithm");
-    // Find components
-    struct Components {
-        Vec3d pos;
-        Vec3d normal;
-    };
+struct Components {
+    std::vector<std::vector<Point>> vertices;
+    std::vector<std::vector<Point>> smoothed_v;
+    std::vector<std::vector<Vec3>> normals;
+};
 
+[[nodiscard]]
+auto split_components(std::vector<Point>&& org_vertices, std::vector<Vec3>&& org_normals, const RsROpts& opts,
+                      std::vector<Point>&& in_smoothed_v)
+    -> Components
+{
     std::vector<std::vector<Point>> component_vertices;
     std::vector<std::vector<Point>> component_smoothed_v;
     std::vector<std::vector<Vec3>> component_normals;
@@ -2278,153 +2223,192 @@ void reconstruct_single(::HMesh::Manifold& output, std::vector<Point>& org_verti
 
         in_smoothed_v.clear();
     }
+    return {
+        .vertices = std::move(component_vertices),
+        .smoothed_v = std::move(component_smoothed_v),
+        .normals = std::move(component_normals)
+    };
+}
 
-    for (int component_id = 0; component_id < component_vertices.size(); component_id++) {
-        std::cout << "Reconstructing component " + std::to_string(component_id) + " ..." << std::endl;
+auto component_to_manifold(
+    const RsROpts& opts,
+    std::vector<Point>& vertices,
+    std::vector<Vec3>& normals,
+    std::vector<Point>& smoothed_v,
+    std::vector<NodeID>& indices) -> ::HMesh::Manifold
+{
+    std::vector<std::vector<NodeID>> faces;
+    // Insert the number_of_data_points in the tree
+    Tree kdTree;
+    build_KDTree(kdTree, smoothed_v, indices);
 
-        std::vector<std::vector<NodeID>> faces;
-        std::vector<Point> vertices = component_vertices[component_id];
-        std::vector<Vec3> normals = component_normals[component_id];
-        std::vector<Point> smoothed_v = component_smoothed_v[component_id];
+    std::cout << "Init mst" << std::endl;
 
-        std::vector<NodeID> indices(smoothed_v.size());
-        std::iota(indices.begin(), indices.end(), 0);
+    // Initial Structure
+    RSGraph mst;
+    /*mst.init(vertices.size());*/
+    std::vector<TEdge> full_edges;
+    std::vector<m_Edge_length> edge_length;
+    std::vector<float> connection_max_length(vertices.size(), 0.);
+    std::vector<float> pre_max_length(vertices.size(), 0.);
+    mst.isEuclidean = opts.isEuclidean;
+    mst.exp_genus = opts.genus;
+    {
+        SimpGraph g;
+        init_graph(smoothed_v, smoothed_v, normals,
+                   kdTree, g, connection_max_length,
+                   pre_max_length, opts.theta, opts.k, opts.isEuclidean);
 
-        // Insert number_of_data_points in the tree
-        Tree kdTree;
-        build_KDTree(kdTree, smoothed_v, indices);
+        // Generate MST
+        build_mst(g, 0, mst, normals, smoothed_v, opts.isEuclidean);
 
-        timer.start("Build MST");
+        // Edge arrays and sort
+        for (NodeID node : g.node_ids()) {
+            for (NodeID node_neighbor : g.neighbors(node)) {
+                if (node < node_neighbor) {
+                    Vec3 edge = smoothed_v[node] - smoothed_v[node_neighbor];
+                    double len = edge.length();
 
-        std::cout << "Init mst" << std::endl;
-
-        // Initial Structure
-        RSGraph mst;
-        /*mst.init(vertices.size());*/
-        std::vector<TEdge> full_edges;
-        std::vector<m_Edge_length> edge_length;
-        std::vector<float> connection_max_length(vertices.size(), 0.);
-        std::vector<float> pre_max_length(vertices.size(), 0.);
-        mst.isEuclidean = opts.isEuclidean;
-        mst.exp_genus = opts.genus;
-        {
-            SimpGraph g;
-            init_graph(smoothed_v, smoothed_v, normals,
-                       kdTree, g, connection_max_length,
-                       pre_max_length, opts.theta, opts.k, opts.isEuclidean);
-
-            // Generate MST
-            build_mst(g, 0, mst, normals, smoothed_v, opts.isEuclidean);
-
-            // Edge arrays and sort
-            if (true) {
-                for (NodeID node : g.node_ids()) {
-                    for (NodeID node_neighbor : g.neighbors(node)) {
-                        if (node < node_neighbor) {
-                            Vec3 edge = smoothed_v[node] - smoothed_v[node_neighbor];
-                            double len = edge.length();
-
-                            if (!opts.isEuclidean) {
-                                len = cal_proj_dist(edge, normals[node], normals[node_neighbor]);
-                            }
-
-                            if (len > pre_max_length[node] ||
-                                len > pre_max_length[node_neighbor])
-                                continue;
-                            edge_length.push_back(m_Edge_length(len, full_edges.size()));
-                            full_edges.push_back(TEdge(node, node_neighbor));
-                        }
+                    if (!opts.isEuclidean) {
+                        len = cal_proj_dist(edge, normals[node], normals[node_neighbor]);
                     }
-                }
-                std::sort(edge_length.begin(), edge_length.end(), edge_comparator);
-            }
-        }
-        timer.end("Build MST");
 
-        // Initialize face loop label
-        mst.etf.reserve(6 * vertices.size() - 11);
-        init_face_loop_label(mst);
-
-
-        // Vanilla MST imp
-        int inserted_edge = 0;
-        if (true) {
-            // Edge connection
-            for (int i = 0; i < edge_length.size(); i++) {
-                if (i % 100000 == 0) {
-                    //std::cout << "Step " << i << " / " << edge_length.size() << std::endl;
-                    showProgressBar(i / static_cast<float>(edge_length.size()));
-                }
-                unsigned int edge_idx = edge_length[i].second;
-                TEdge this_edge = full_edges[edge_idx];
-
-                //if ((this_edge.first == 997 && this_edge.second == 1626) ||
-                //    (this_edge.first == 1626 && this_edge.second == 733))
-                //    std::cout << mst.find_edge(733, 2114) << std::endl;
-                if (mst.find_edge(this_edge.first, this_edge.second) != AMGraph::InvalidEdgeID)
-                    continue;
-
-                if (bool isValid = Vanilla_check(mst, this_edge, kdTree)) {
-                    bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree,
-                                                 edge_length[i].first);
+                    if (len > pre_max_length[node] ||
+                        len > pre_max_length[node_neighbor])
+                        continue;
+                    edge_length.emplace_back(len, full_edges.size());
+                    full_edges.emplace_back(node, node_neighbor);
                 }
             }
-            // TODO: does this do anything
-            showProgressBar(1.0);
-            std::cout << std::endl;
         }
-        //std::cout << mst.total_edge_length << std::endl;
-
-        //std::vector<std::vector<NodeID>> mesh_before = faces;
-        // Create handles & Triangulation
-        if (opts.genus != 0) {
-            mst.isFinal = true;
-            std::vector<NodeID> connected_handle_root;
-            connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.isEuclidean);
-            bool isFaceLoop = false;
-            triangulate(faces, mst, kdTree, isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root);
-        }
-
-        ::HMesh::Manifold res;
-        // Extract vertex position
-        std::vector<double> pos;
-        for (int i = 0; i < mst.no_nodes(); i++) {
-            pos.push_back(vertices[i][0]);
-            pos.push_back(vertices[i][1]);
-            pos.push_back(vertices[i][2]);
-        }
-
-        std::vector<int> mesh_faces(faces.size(), 3);
-        std::vector<int> flattened_face;
-        for (auto& face : faces) {
-            flattened_face.push_back(face[0]);
-            flattened_face.push_back(face[1]);
-            flattened_face.push_back(face[2]);
-        }
-
-        ::HMesh::build(res, mst.no_nodes(), &pos[0], faces.size(),
-                       &mesh_faces[0], &flattened_face[0]);
-        output.merge(res);
+        std::sort(edge_length.begin(), edge_length.end(), edge_comparator);
     }
 
-    timer.end("algorithm");
-    timer.end("Whole process");
-    std::string line(40, '=');
-    std::cout << line << std::endl << std::endl;
-    timer.show();
+    // Initialize face loop label
+    mst.etf.reserve(6 * vertices.size() - 11);
+    init_face_loop_label(mst);
+
+
+    // Vanilla MST imp
+    if (true) {
+        // Edge connection
+        for (int i = 0; i < edge_length.size(); i++) {
+            if (i % 100000 == 0) {
+                //std::cout << "Step " << i << " / " << edge_length.size() << std::endl;
+                showProgressBar(i / static_cast<float>(edge_length.size()));
+            }
+            unsigned int edge_idx = edge_length[i].second;
+            TEdge this_edge = full_edges[edge_idx];
+
+            //if ((this_edge.first == 997 && this_edge.second == 1626) ||
+            //    (this_edge.first == 1626 && this_edge.second == 733))
+            //    std::cout << mst.find_edge(733, 2114) << std::endl;
+            if (mst.find_edge(this_edge.first, this_edge.second) != AMGraph::InvalidEdgeID)
+                continue;
+
+            if (bool isValid = Vanilla_check(mst, this_edge, kdTree)) {
+                bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree,
+                                             edge_length[i].first);
+            }
+        }
+        // TODO: does this do anything
+        showProgressBar(1.0);
+        std::cout << std::endl;
+    }
+    //std::cout << mst.total_edge_length << std::endl;
+
+    //std::vector<std::vector<NodeID>> mesh_before = faces;
+    // Create handles & Triangulation
+    if (opts.genus != 0) {
+        mst.isFinal = true;
+        std::vector<NodeID> connected_handle_root;
+        connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.isEuclidean);
+        bool isFaceLoop = false;
+        triangulate(faces, mst, kdTree, isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root);
+    }
+
+    ::HMesh::Manifold res;
+    // Extract vertex position
+    std::vector<double> pos;
+    for (int i = 0; i < mst.no_nodes(); i++) {
+        pos.push_back(vertices[i][0]);
+        pos.push_back(vertices[i][1]);
+        pos.push_back(vertices[i][2]);
+    }
+
+    std::vector<int> mesh_faces(faces.size(), 3);
+    std::vector<int> flattened_face;
+    for (auto& face : faces) {
+        flattened_face.push_back(face[0]);
+        flattened_face.push_back(face[1]);
+        flattened_face.push_back(face[2]);
+    }
+
+    ::HMesh::build(res, mst.no_nodes(), &pos[0], faces.size(),
+                   &mesh_faces[0], &flattened_face[0]);
+
+    return std::move(res);
 }
 
 auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vec3>& normals,
                          RsROpts& opts) -> ::HMesh::Manifold
 {
     ::HMesh::Manifold output;
-    auto vertices2 = vertices;
-    auto normals2 = normals;
+    auto org_vertices = vertices;
+    auto org_normals = normals;
     if (normals.empty()) {
         opts.isGTNormal = false;
+    } else {
+        assert(vertices.size() == normals.size());
     }
 
-    reconstruct_single(output, vertices2, normals2, opts);
+    Timer timer;
+    timer
+        .create("Whole process")
+        .create("Estimate normals")
+        .create("Build MST")
+        .create("Build Rotation System")
+        .create("algorithm");
+    timer
+        .start("Whole process");
+
+    // Estimate normals & orientation & weighted smoothing
+    timer.start("Estimate normals");
+    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(org_vertices, org_normals, opts);
+    timer.end("Estimate normals");
+
+
+    // Find components
+    timer.start("algorithm");
+    auto [component_vertices,
+        component_smoothed_v,
+        component_normals] = split_components(
+        std::move(org_vertices), std::move(org_normals), opts, std::move(in_smoothed_v));
+    // There is no guarantee that there is more than one component, and components can
+    // be highly non-uniform in terms of how many primitives they have. That means we cannot
+    // rely on this loop for good parallelization opportunities.
+    for (int component_id = 0; component_id < component_vertices.size(); component_id++) {
+        std::cout << "Reconstructing component " + std::to_string(component_id) + " ...\n";
+
+        //std::vector<std::vector<NodeID>> faces;
+        std::vector<Point> vertices = std::move(component_vertices[component_id]);
+        std::vector<Vec3> normals = std::move(component_normals[component_id]);
+        std::vector<Point> smoothed_v = std::move(component_smoothed_v[component_id]);
+
+        std::vector<NodeID> indices(smoothed_v.size());
+        std::iota(indices.begin(), indices.end(), 0);
+
+        auto res = component_to_manifold(opts, vertices, normals, smoothed_v, indices);
+        output.merge(res);
+    }
+    timer.end("algorithm");
+    timer.end("Whole process");
+
+    const std::string line(40, '=');
+    std::cout << line << "\n\n";
+    timer.show();
+
     return output;
 }
-}
+
+} // namespace GEL::HMesh::RsR

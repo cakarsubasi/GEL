@@ -10,11 +10,19 @@
 using GEL::HMesh::RSR::point_cloud_to_mesh;
 
 static constexpr auto file_name =
-        "../../../../data/PointClouds/Capital_A.obj";
+//        "../../../../data/PointClouds/Capital_A.obj";
         //    "../../../../data/bunny.obj";
 //    "../../../../data/torus.obj";
+    "../../../../data/PointClouds/bun_complete.obj";
 static constexpr auto output_name =
-        "Capital_A.obj";
+        "bunny.obj";
+
+constexpr auto is_euclidean = false;
+constexpr auto k = 30;
+constexpr auto genus = -1;
+constexpr auto r = 20;
+constexpr auto theta = 60;
+constexpr auto n = 50;
 
 auto manifold_is_identical(const HMesh::Manifold& left, const HMesh::Manifold& right) -> bool
 {
@@ -60,11 +68,12 @@ auto test_new() -> HMesh::Manifold
     }
     normals = {};
     GEL::HMesh::RSR::RsROpts opts;
-    opts.isEuclidean = true;
-    opts.k = 30;
-    opts.genus = 1;
-    opts.r = 20;
-    opts.theta = 20;
+    opts.isEuclidean = is_euclidean;
+    opts.k = k;
+    opts.genus = genus;
+    opts.r = r;
+    opts.theta = theta;
+    opts.n = n;
     HMesh::Manifold output = point_cloud_to_mesh(points, normals, opts);
     // k: 70 is too large
     // r: needs isEuclidean false
@@ -99,7 +108,7 @@ auto test_old() -> HMesh::Manifold
         normals.emplace_back(point);
     }
     normals = {};
-    reconstruct_single(output, points, normals, true,  1, 30, 20, 20);
+    reconstruct_single(output, points, normals, is_euclidean,  genus, k, r, theta, n);
     // k: 70 is too large
     // r: needs isEuclidean false
     std::cout << output.positions.size() << "\n";
@@ -110,6 +119,8 @@ auto test_old() -> HMesh::Manifold
 
 int main()
 {
-    assert(manifold_is_identical(test_new(), test_old()));
+    auto left = test_new();
+    auto right = test_old();
+    assert(manifold_is_identical(left, right));
     return 0;
 }

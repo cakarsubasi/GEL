@@ -92,10 +92,12 @@ struct Vertex {
     std::set<Neighbor> ordered_neighbors;
 };
 
+// TODO: 32 bytes per edge is quite heavy
 struct Edge {
     NodeID source = -1;
     NodeID target = -1;
     double weight = 0.;
+    // ?
     int ref_time = 0;
     int count_weight = 1;
 };
@@ -265,11 +267,11 @@ typedef Geometry::KDTreeRecord<Point, NodeID> Record;
 void NN_search(const Point&, const Tree&, double,
                std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
 
-double find_components(std::vector<Point>& vertices,
+double find_components(const std::vector<Point>& vertices,
                        std::vector<std::vector<Point>>& component_vertices,
-                       std::vector<Point>& smoothed_v,
+                       const std::vector<Point>& smoothed_v,
                        std::vector<std::vector<Point>>& component_smoothed_v,
-                       std::vector<Vec3>& normals,
+                       const std::vector<Vec3>& normals,
                        std::vector<std::vector<Vec3>>& component_normals,
                        const Tree& kdTree,
                        float cross_conn_thresh,
@@ -289,17 +291,23 @@ void weighted_smooth(const std::vector<Point>& vertices,
                      std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
                      const Tree& kdTree);
 
-void estimate_normal(const std::vector<Point>& vertices,
-                     const Tree& kdTree, std::vector<Vec3>& normals,
-                     std::vector<NodeID>& zero_normal_id, bool isGTNormal);
+// void estimate_normal(const std::vector<Point>& vertices,
+//                      const Tree& kdTree, std::vector<Vec3>& normals,
+//                      std::vector<NodeID>& zero_normal_id, bool isGTNormal);
 
-void minimum_spanning_tree(const SimpGraph& g, NodeID root,
-                           RSGraph& gn, std::vector<Vec3>& normals, std::vector<Point>& vertices, bool isEuclidean);
+void minimum_spanning_tree(
+    const SimpGraph& g,
+    NodeID root,
+    RSGraph& gn,
+    const std::vector<Vec3>& normals,
+    const std::vector<Point>& vertices,
+    bool isEuclidean
+    );
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
-void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
-                                Tree& kdTree, std::vector<Vec3>& normals, int k);
+void correct_normal_orientation(const std::vector<Point>& in_smoothed_v,
+                                const Tree& kdTree, std::vector<Vec3>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
                    Tree& KDTree, float edge_length);
@@ -331,17 +339,17 @@ const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const No
 // Utils
 void showProgressBar(float progress);
 
-Vec3 projected_vector(Vec3& input, Vec3& normal);
+Vec3 projected_vector(const Vec3& input, const Vec3& normal);
 
 void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& share_neighbor, RSGraph& g);
 
 // Algorithm
 
-bool geometry_check(RSGraph& mst, TEdge& candidate, Tree& kdTree);
+bool geometry_check(const RSGraph& mst, const TEdge& candidate, const Tree& kdTree);
 
 bool Vanilla_check(RSGraph& mst, TEdge& candidate, Tree& kdTree);
 
-bool isIntersecting(RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4);
+bool isIntersecting(const RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4);
 
 bool routine_check(const RSGraph& mst, const std::vector<NodeID>& triangle);
 
