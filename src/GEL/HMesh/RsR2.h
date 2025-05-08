@@ -302,7 +302,7 @@ void minimum_spanning_tree(
     const std::vector<Vec3>& normals,
     const std::vector<Point>& vertices,
     bool isEuclidean
-    );
+);
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
@@ -354,7 +354,7 @@ bool isIntersecting(const RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID 
 bool routine_check(const RSGraph& mst, const std::vector<NodeID>& triangle);
 
 auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vec3>& normals,
-                         RsROpts& opts) -> ::HMesh::Manifold;
+                         const RsROpts& opts) -> ::HMesh::Manifold;
 } // namespace GEL::HMesh::RSR
 
 #endif // GEL_HMesh_RsR2_hpp

@@ -739,8 +739,13 @@ float cal_angle_based_weight(const Vec3& this_normal, const Vec3& neighbor_norma
     return 1. - dot_pdt;
 }
 
-void minimum_spanning_tree(const SimpGraph& g, NodeID root,
-                           RSGraph& gn, std::vector<Vec3>& normals, std::vector<Point>& vertices, bool isEuclidean)
+void minimum_spanning_tree(
+    const SimpGraph& g,
+    NodeID root,
+    RSGraph& gn,
+    const std::vector<Vec3>& normals,
+    const std::vector<Point>& vertices,
+    const bool isEuclidean)
 {
     using QElem = std::tuple<double, NodeID, NodeID>;
     if (root == AMGraph::InvalidNodeID)
@@ -2035,11 +2040,11 @@ void triangulate(
  * @return None
  */
 void build_mst(
-    SimpGraph& g,
-    NodeID root,
+    const SimpGraph& g,
+    const NodeID root,
     RSGraph& out_mst,
-    std::vector<Vec3>& normals,
-    std::vector<Point>& vertices,
+    const std::vector<Vec3>& normals,
+    const std::vector<Point>& vertices,
     const bool isEuclidean)
 {
     //SimpGraph mst_temp;
@@ -2123,8 +2128,12 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
 {
     std::vector<Point> in_smoothed_v;
     {
-        std::vector<NodeID> indices(org_vertices.size());
-        std::iota(indices.begin(), indices.end(), 0);
+        const auto indices = [&] {
+            std::vector<NodeID> temp(org_vertices.size());
+            std::iota(temp.begin(), temp.end(), 0);
+            return temp;
+        }();
+
         // Insert the number_of_data_points into the tree
         Tree kdTree, tree_before_remove;
         build_KDTree(tree_before_remove, org_vertices, indices);
@@ -2232,10 +2241,10 @@ auto split_components(std::vector<Point>&& org_vertices, std::vector<Vec3>&& org
 
 auto component_to_manifold(
     const RsROpts& opts,
-    std::vector<Point>& vertices,
-    std::vector<Vec3>& normals,
-    std::vector<Point>& smoothed_v,
-    std::vector<NodeID>& indices) -> ::HMesh::Manifold
+    const std::vector<Point>&& vertices,
+    const std::vector<Vec3>&& normals,
+    const std::vector<Point>&& smoothed_v,
+    const std::vector<NodeID>& indices) -> ::HMesh::Manifold
 {
     std::vector<std::vector<NodeID>> faces;
     // Insert the number_of_data_points in the tree
@@ -2350,31 +2359,32 @@ auto component_to_manifold(
     return std::move(res);
 }
 
-auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vec3>& normals,
-                         RsROpts& opts) -> ::HMesh::Manifold
+auto point_cloud_to_mesh(
+    const std::vector<Point>& vertices,
+    const std::vector<Vec3>& normals,
+    const RsROpts& opts) -> ::HMesh::Manifold
 {
+    auto opts2 = opts;
     ::HMesh::Manifold output;
     auto org_vertices = vertices;
     auto org_normals = normals;
     if (normals.empty()) {
-        opts.isGTNormal = false;
+        opts2.isGTNormal = false;
     } else {
         assert(vertices.size() == normals.size());
     }
-
+    
     Timer timer;
     timer
         .create("Whole process")
         .create("Estimate normals")
-        .create("Build MST")
-        .create("Build Rotation System")
         .create("algorithm");
     timer
         .start("Whole process");
 
     // Estimate normals & orientation & weighted smoothing
     timer.start("Estimate normals");
-    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(org_vertices, org_normals, opts);
+    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(org_vertices, org_normals, opts2);
     timer.end("Estimate normals");
 
 
@@ -2383,7 +2393,7 @@ auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<V
     auto [component_vertices,
         component_smoothed_v,
         component_normals] = split_components(
-        std::move(org_vertices), std::move(org_normals), opts, std::move(in_smoothed_v));
+        std::move(org_vertices), std::move(org_normals), opts2, std::move(in_smoothed_v));
     // There is no guarantee that there is more than one component, and components can
     // be highly non-uniform in terms of how many primitives they have. That means we cannot
     // rely on this loop for good parallelization opportunities.
@@ -2392,13 +2402,13 @@ auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<V
 
         //std::vector<std::vector<NodeID>> faces;
         std::vector<Point> vertices = std::move(component_vertices[component_id]);
-        std::vector<Vec3> normals = std::move(component_normals[component_id]);
+        std::vector<Vec3>  normals = std::move(component_normals[component_id]);
         std::vector<Point> smoothed_v = std::move(component_smoothed_v[component_id]);
 
         std::vector<NodeID> indices(smoothed_v.size());
         std::iota(indices.begin(), indices.end(), 0);
 
-        auto res = component_to_manifold(opts, vertices, normals, smoothed_v, indices);
+        auto res = component_to_manifold(opts2, std::move(vertices), std::move(normals), std::move(smoothed_v), indices);
         output.merge(res);
     }
     timer.end("algorithm");
