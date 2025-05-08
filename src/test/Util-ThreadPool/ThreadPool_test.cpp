@@ -171,6 +171,11 @@ TEST_CASE("for_loop_performance")
 
 auto static_func(int in) -> double { return static_cast<double>(in); };
 
+struct IncompatibleStruct {};
+
+template <typename Ty>
+auto identity(Ty in) -> Ty { return in;}
+
 TEST_CASE("parallel_adapter_callability")
 {
     ThreadPool pool(1);
@@ -192,9 +197,9 @@ TEST_CASE("parallel_adapter_callability")
     auto r7 = parallel_map(pool, lambda, in, std::move(out));     // preferred passing. out is moved to return
     auto r8 = parallel_map(pool, lambda, in_ref, std::move(out)); // moved into the return value
     auto r9 = parallel_map(pool, lambda, in_rref, std::move(out));
-    auto r10 = parallel_map(pool, lambda, in, out_rref);
-    auto r11 = parallel_map(pool, lambda, in_ref, out_rref);
-    auto r12 = parallel_map(pool, lambda, in_rref, out_rref);
+    auto& r10 = parallel_map(pool, lambda, in, out_rref);
+    auto& r11 = parallel_map(pool, lambda, in_ref, out_rref);
+    auto& r12 = parallel_map(pool, lambda, in_rref, out_rref);
 
     auto& lambda_ref = lambda;
     auto&& lambda_rref = lambda;
@@ -208,39 +213,83 @@ TEST_CASE("parallel_adapter_callability")
     auto r16 = parallel_map(pool, lambda_wrap_rref, in, out_rref);
     auto r17 = parallel_map(pool, static_func, in, out_rref);
 
+    auto r18 = parallel_map(pool, identity<double>, in_ref);
 }
 
-// int not_main()
-// {
-//
-//     constexpr auto size = 10000;
-//     std::vector<int> v(size);
-//     for (int i = 0; i < size; ++i)
-//     {
-//         v[i] = i;
-//     }
-//
-//     std::function<void(int,int)> lambda = [&](auto i, auto j)
-//     {
-//         v.at(i) = j;
-//     };
-//
-//     auto lambda2 = [](int x) -> int
-//     {
-//         return x * 2 + 5;
-//     };
-//
-//     //ParallelIterator<decltype(v)> pi(10);
-//     ThreadPool pool(2);
-//     std::vector<int> v2;
-//     v2 = parallel_map(pool, lambda2, v, std::move(v2));
-//
-//     const auto v3 = parallel_map(pool, lambda2, v);
-//     for (int i = 0; i < 50; ++i)
-//     {
-//         std::cout << i << " : " << v3.at(i) << "\n";
-//     }
-//     // std::vector<int> r2 = ParallelFor<int>(pool, v, [&](auto x) -> auto { return x; });
-//     //pi.ForEach(v, lambda);
-//     return 0;
-// }
+TEST_CASE("parallel_map_correctness")
+{
+    ThreadPool pool(3);
+    const auto v = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto times_two = [](auto x){ return x * 2; };
+    std::vector<int> out;
+
+    auto& out2 = parallel_map(pool, times_two, v, out);
+    CHECK(&out2 == &out);
+    for (auto id = 0; id < v.size(); ++id) {
+        CHECK(out.at(id) == 2 * id);
+    }
+}
+
+TEST_CASE("parallel_enumerate_map_correctness")
+{
+    ThreadPool pool(3);
+    const auto v = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto times_two = [](auto idx, auto x){ return idx * x; };
+    std::vector<int> out;
+
+    auto& out2 = parallel_enumerate_map(pool, times_two, v, out);
+    CHECK(&out2 == &out);
+    for (auto id = 0; id < v.size(); ++id) {
+        CHECK(out.at(id) == id * id);
+    }
+}
+
+TEST_CASE("parallel_filter_correctness")
+{
+    ThreadPool pool(3);
+    const auto v = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto is_even = [](auto x){ return x % 2 == 0; };
+    std::vector<int> out;
+
+    auto& out2 = parallel_filter(pool, is_even, v, out);
+    CHECK(&out2 == &out);
+    CHECK(out.size() == 5);
+    for (auto id = 0; id < out.size(); ++id) {
+        CHECK(out.at(id) == id * 2);
+    }
+}
+
+TEST_CASE("parallel_map_filter_correctness")
+{
+    ThreadPool pool(3);
+    const auto v = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto times_two_is_even = [](int x) -> std::optional<int> {
+        if (x % 2 == 0) { return std::make_optional(x * 2); }
+        else { return std::nullopt; }
+    };
+    std::vector<int> out;
+
+    // TODO: map_filter should check if the passed function actually returns an optional
+    auto& out2 = parallel_map_filter(pool, times_two_is_even, v, out);
+    CHECK(&out2 == &out);
+    CHECK(out.size() == 5);
+    for (auto id = 0; id < out.size(); ++id) {
+        CHECK(out.at(id) == id * 4);
+    }
+}
