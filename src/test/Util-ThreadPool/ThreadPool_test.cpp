@@ -31,7 +31,7 @@ inline float non_trivial_function(const int x)
 {
     float total = 0.0;
     for (int i = 0; i < 500; ++i) {
-        total += 1.0f / static_cast<float>(i) * std::cos(static_cast<float>(x)/static_cast<float>(i+1));
+        total += 1.0f / static_cast<float>(i+1) * std::cos(static_cast<float>(x)/static_cast<float>(i+1));
     }
     return total;
 }
@@ -46,11 +46,6 @@ bool test_oracle()
     std::iota(v.begin(), v.end(), 0);
     std::ranges::transform(v.cbegin(), v.cend(), vout.begin(), non_trivial_function);
     const auto right = parallel_map(pool, non_trivial_function, v, std::move(vout2));
-    for (auto i = 0; i < 10; ++i) {
-        std::cout << i << " : " << vout[i] << "\n";
-        std::cout << i << " : " << right[i] << "\n";
-        //CHECK_EQ(vout[i], right[i]);
-    }
     CHECK_EQ(vout, right);
     return true;
 }
@@ -172,6 +167,47 @@ TEST_CASE("for_loop_performance")
             for_loop()
         );
     });
+}
+
+auto static_func(int in) -> double { return static_cast<double>(in); };
+
+TEST_CASE("parallel_adapter_callability")
+{
+    ThreadPool pool(1);
+    std::vector<int> in(0);
+    std::vector<double> out(0);
+    const auto& in_ref = in;
+    auto& out_ref = out;
+    auto in_rref = std::move(in);
+    auto out_rref = std::move(out);
+    auto lambda = [&](auto x) { return x; };
+    auto r0 = parallel_map(pool, lambda, in);
+    auto r1 = parallel_map(pool, lambda, in_ref);
+    auto r2 = parallel_map(pool, lambda, in_rref);
+    auto r3 = parallel_map(pool, lambda, std::move(in)); // pointless but allowed
+    auto& r4 = parallel_map(pool, lambda, in, out_ref);     // return is the same object as out_ref
+    auto& r5 = parallel_map(pool, lambda, in_ref, out_ref); // return is the same object as out_ref
+    auto& r6 = parallel_map(pool, lambda, in_rref, out_ref);// return is the same object as out_ref
+
+    auto r7 = parallel_map(pool, lambda, in, std::move(out));     // preferred passing. out is moved to return
+    auto r8 = parallel_map(pool, lambda, in_ref, std::move(out)); // moved into the return value
+    auto r9 = parallel_map(pool, lambda, in_rref, std::move(out));
+    auto r10 = parallel_map(pool, lambda, in, out_rref);
+    auto r11 = parallel_map(pool, lambda, in_ref, out_rref);
+    auto r12 = parallel_map(pool, lambda, in_rref, out_rref);
+
+    auto& lambda_ref = lambda;
+    auto&& lambda_rref = lambda;
+    auto r13 = parallel_map(pool, lambda_ref, in, out_rref);
+
+    std::function<double(int)> lambda_wrap = lambda;
+    auto& lambda_wrap_ref = lambda_wrap;
+    auto&& lambda_wrap_rref = std::move(lambda);
+    auto r14 = parallel_map(pool, lambda_wrap, in, out_rref);
+    auto r15 = parallel_map(pool, lambda_wrap_ref, in, out_rref);
+    auto r16 = parallel_map(pool, lambda_wrap_rref, in, out_rref);
+    auto r17 = parallel_map(pool, static_func, in, out_rref);
+
 }
 
 // int not_main()
