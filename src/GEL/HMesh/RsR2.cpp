@@ -1,6 +1,9 @@
 #include <GEL/HMesh/RsR2.h>
 #include <GEL/HMesh/Timer.h>
 
+#include "GEL/Util/ParallelAdapters.h"
+
+
 namespace GEL::HMesh::RSR
 {
 struct m_cmp {
@@ -18,6 +21,8 @@ using m_priority_queue = std::priority_queue<std::pair<std::vector<NodeID>, floa
 using m_Edge_length = std::pair<float, int>;
 using m_face_pair = std::pair<int, std::string>;
 using m_neighbor_pair = std::pair<double, NodeID>;
+
+using ::Util::AttribVec;
 
 inline bool edge_comparator(const m_Edge_length& l, const m_Edge_length& r)
 {
@@ -689,25 +694,22 @@ auto normalize_normals(std::vector<Vec3>& normals) -> void
     }
 }
 
-void estimate_normal_no_normals(const std::vector<Point>& vertices, const Tree& kdTree, std::vector<Vec3>& normals)
+void estimate_normal_no_normals(
+    Util::ThreadPool& pool,
+    const std::vector<Point>& vertices,
+    const Tree& kdTree,
+    std::vector<Vec3>& normals)
 {
     normals.clear();
     const size_t neighbor_num = std::max(static_cast<int>(vertices.size() / 2000.), 192);
     // Data type transfer & Cal diagonal size
-    NodeID idx = 0;
-
-    double last_dist = INFINITY;
-    Point last_v(0., 0., 0.);
-    for (auto& point : vertices) {
+    auto lambda = [&](auto point) {
         std::vector<NodeID> neighbors;
         std::vector<double> neighbor_dist;
-        last_dist += (point - last_v).length();
         kNN_search(point, kdTree, neighbor_num, neighbors, neighbor_dist, true);
-        last_dist = neighbor_dist[neighbor_dist.size() - 1];
-        last_v = point;
 
         std::vector<Point> neighbor_coords;
-        for (auto neighbor_id : neighbors) {
+        for (const auto neighbor_id : neighbors) {
             neighbor_coords.push_back(vertices[neighbor_id]);
         }
         Vec3 normal = estimateNormal(neighbor_coords);
@@ -716,10 +718,9 @@ void estimate_normal_no_normals(const std::vector<Point>& vertices, const Tree& 
             std::cerr << neighbors.size() << std::endl;
             std::cerr << "error" << std::endl;
         }
-        normals.push_back(normal);
-
-        idx++;
-    }
+        return normal;
+    };
+    Util::parallel_map(pool, lambda, vertices, normals);
 }
 
 /**
@@ -754,7 +755,7 @@ void minimum_spanning_tree(
     for (const auto n : g.node_ids())
         gn.add_node(vertices[n], normals[n]);
 
-    Util::AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
+    AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
 
     std::priority_queue<QElem> Q;
     for (auto n : g.neighbors(root)) {
@@ -799,7 +800,7 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     for (auto n : g.node_ids())
         gn.add_node();
 
-    Util::AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
+    AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
 
     std::priority_queue<QElem> Q;
     for (auto n : g.neighbors(root)) {
@@ -2126,6 +2127,7 @@ void build_mst(
 auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<Vec3>& org_normals,
                                  const RsROpts& opts) -> std::vector<Point>
 {
+    Util::ThreadPool pool(15);
     std::vector<Point> in_smoothed_v;
     {
         const auto indices = [&] {
@@ -2145,7 +2147,7 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
         if (opts.isGTNormal) {
             normalize_normals(org_normals);
         } else {
-            estimate_normal_no_normals(org_vertices, kdTree, org_normals);
+            estimate_normal_no_normals(pool, org_vertices, kdTree, org_normals);
         }
 
         {
@@ -2159,7 +2161,7 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
             Tree temp_tree1;
             build_KDTree(temp_tree1, in_smoothed_v, indices);
             if (!opts.isGTNormal) {
-                estimate_normal_no_normals(in_smoothed_v, temp_tree1, org_normals);
+                estimate_normal_no_normals(pool, in_smoothed_v, temp_tree1, org_normals);
             }
 
             // Another round of smoothing
@@ -2179,7 +2181,7 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
                     build_KDTree(temp_tree2, in_smoothed_v, indices);
 
                     if (!opts.isGTNormal) {
-                        estimate_normal_no_normals(in_smoothed_v, temp_tree2, org_normals);
+                        estimate_normal_no_normals(pool, in_smoothed_v, temp_tree2, org_normals);
                     }
                 }
             }
