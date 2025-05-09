@@ -10,6 +10,8 @@
 
 #include <GEL/Util/ThreadPool.h>
 
+#include <optional>
+
 namespace GEL::Util
 {
 /// Concepts for constraining the inputs of parallel adapters
