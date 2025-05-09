@@ -2468,7 +2468,7 @@ auto point_cloud_to_mesh(
     // There is no guarantee that there is more than one component, and components can
     // be highly non-uniform in terms of how many primitives they have. That means we cannot
     // rely on this loop for good parallelization opportunities.
-    for (int component_id = 0; component_id < component_vertices.size(); component_id++) {
+    for (size_t component_id = 0; component_id < component_vertices.size(); component_id++) {
         std::cout << "Reconstructing component " + std::to_string(component_id) + " ...\n";
 
         //std::vector<std::vector<NodeID>> faces;
