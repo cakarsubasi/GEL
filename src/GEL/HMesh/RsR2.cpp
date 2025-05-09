@@ -78,7 +78,14 @@ void kNN_search(const Point& query, const Tree& kdTree,
     }
 }
 
+template <size_t k, typename DistType>
+void kNN_search_const(const Point& query, const Tree& kdTree, std::array<NodeID, k>& neighbors, std::array<DistType, k>& neighbor_distance, const bool isContain)
+{
+
+}
+
 void remove_duplicate_vertices(
+    Util::ThreadPool& pool,
     std::vector<Point>& vertices,
     std::vector<Vec3>& normals,
     const Tree& kdTree,
@@ -86,20 +93,18 @@ void remove_duplicate_vertices(
 {
     std::vector<Point> new_vertices;
     std::vector<Vec3> new_normals;
-    double last_dist = INFINITY;
-    Point last_v(0., 0., 0.);
-    int this_idx = 0;
-    int removed = 0;
-    for (auto& vertex : vertices) {
+    const auto vertices_num = vertices.size();
+
+    auto lambda = [&kdTree, k](const size_t this_idx, Point vertex, Vec3 _normal)
+    -> std::optional<std::pair<Point, Vec3>> {
+        // TODO: creating two vectors per iteration is surely genius
         std::vector<NodeID> neighbors;
         std::vector<double> neighbor_distance;
-        last_dist += (vertex - last_v).length();
+        // TODO: this creates one more vector internally
+        // TODO: might be a good idea to cache all search results and then map over the search results
         kNN_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
-        last_dist = neighbor_distance[neighbor_distance.size() - 1];
-        last_v = vertex;
 
-        bool isInsert = true;
-        for (int i = 0; i < neighbors.size(); i++) {
+        for (auto i = 0; i < neighbors.size(); i++) {
             const NodeID idx = neighbors[i];
             const double length = neighbor_distance[i];
 
@@ -108,22 +113,28 @@ void remove_duplicate_vertices(
 
             // Remove duplicate vertices
             if (length < 1e-8 && this_idx != idx) {
-                isInsert = false;
-                removed++;
-                break;
+                return std::nullopt;
             }
         }
+        return std::make_optional(std::make_pair(vertex, _normal));
+    };
 
-        if (isInsert) {
-            new_vertices.push_back(vertex);
-            if (!normals.empty())
-                new_normals.push_back(normals[this_idx]);
-        }
-        this_idx++;
-    }
-    std::cout << removed << " duplicate vertices removed." << std::endl;
-    vertices = new_vertices;
-    normals = new_normals;
+    auto lambda2 = [lambda](size_t this_idx, Point vertex) -> std::optional<Point> {
+        if (auto value = std::invoke(lambda, this_idx, vertex, Point(0,0,0)); value.has_value())
+            return std::make_optional(std::get<0>(*value));
+        else
+            return std::nullopt;
+    };
+
+    if (!normals.empty())
+        GEL::Util::parallel_enumerate_map2_filter2(pool, lambda, vertices, normals, new_vertices, new_normals);
+    else
+        GEL::Util::parallel_enumerate_map_filter(pool, lambda2, vertices, new_vertices);
+
+    std::cout << vertices_num - vertices.size() << " duplicate vertices removed." << std::endl;
+
+    vertices = std::move(new_vertices);
+    normals = std::move(new_normals);
 }
 
 /**
@@ -209,14 +220,18 @@ double cal_radians_3d(const Vec3& branch_vec, const Vec3& normal, const Vec3& re
 }
 
 //TODO: adapt kdtree
-void build_KDTree(Tree& kdTree, const std::vector<Point>& vertices, const std::vector<NodeID>& indices)
+Tree build_KDTree(const std::vector<Point>& vertices, const std::vector<NodeID>& indices)
 {
+    Tree kdTree;
+    // safety precondition
+    assert(indices.size() >= vertices.size());
     int idx = 0;
     for (const auto& vertex : vertices) {
         kdTree.insert(vertex, indices[idx]);
         idx++;
     }
     kdTree.build();
+    return kdTree;
 }
 
 /**
@@ -610,16 +625,16 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int thre
 }
 
 /**
-    * @brief weighted smoothing method using defined neighborhood with tangential distance weighted
-    *
-    * @param vertices: vertices of the point cloud
-    * @param smoothed_v: [OUT] vertices after smoothing
-    * @param normals: normal of the point cloud
-    * @param kdTree: kd-tree for knn query
-    * \@param tr_dist: distance container
-    *
-    * @return None
-    */
+* @brief weighted smoothing method using defined neighborhood with tangential distance weighted
+*
+* @param vertices: vertices of the point cloud
+* @param smoothed_v: [OUT] vertices after smoothing
+* @param normals: normal of the point cloud
+* @param kdTree: kd-tree for knn query
+* \@param tr_dist: distance container
+*
+* @return None
+*/
 void weighted_smooth(const std::vector<Point>& vertices,
                      std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
                      const Tree& kdTree)
@@ -836,8 +851,8 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     * @return None
     */
 void correct_normal_orientation(
-    std::vector<Point>& in_smoothed_v,
-    Tree& kdTree,
+    const std::vector<Point>& in_smoothed_v,
+    const Tree& kdTree,
     std::vector<Vec3>& normals,
     int k)
 {
@@ -2128,69 +2143,56 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
                                  const RsROpts& opts) -> std::vector<Point>
 {
     Util::ThreadPool pool(15);
-    std::vector<Point> in_smoothed_v;
-    {
-        const auto indices = [&] {
-            std::vector<NodeID> temp(org_vertices.size());
-            std::iota(temp.begin(), temp.end(), 0);
-            return temp;
-        }();
 
-        // Insert the number_of_data_points into the tree
-        Tree kdTree, tree_before_remove;
-        build_KDTree(tree_before_remove, org_vertices, indices);
+    const auto indices = [&] {
+        std::vector<NodeID> temp(org_vertices.size());
+        std::iota(temp.begin(), temp.end(), 0);
+        return temp;
+    }();
 
-        remove_duplicate_vertices(org_vertices, org_normals, tree_before_remove, opts.k);
+    // Insert the number_of_data_points into the tree
+    const auto tree_before_remove = build_KDTree(org_vertices, indices);
+    remove_duplicate_vertices(pool, org_vertices, org_normals, tree_before_remove, opts.k);
 
-        build_KDTree(kdTree, org_vertices, indices);
-
-        if (opts.isGTNormal) {
-            normalize_normals(org_normals);
-        } else {
-            estimate_normal_no_normals(pool, org_vertices, kdTree, org_normals);
-        }
-
-        {
-            std::cout << "Start first round smoothing ..." << std::endl;
-            if (!opts.isEuclidean)
-                weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree);
-            else
-                // TODO: this copies the entire vertices
-                in_smoothed_v = org_vertices;
-
-            Tree temp_tree1;
-            build_KDTree(temp_tree1, in_smoothed_v, indices);
-            if (!opts.isGTNormal) {
-                estimate_normal_no_normals(pool, in_smoothed_v, temp_tree1, org_normals);
-            }
-
-            // Another round of smoothing
-            if (true) {
-                if (!opts.isEuclidean) {
-                    std::cout << "Start second round smoothing ..." << std::endl;
-
-                    std::vector<Point> temp;
-                    temp.reserve(in_smoothed_v.size());
-                    std::swap(temp, in_smoothed_v);
-                    //std::vector<Point> temp(in_smoothed_v.begin(), in_smoothed_v.end());
-                    //std::vector<Point> temp = std::move(in_smoothed_v);
-                    in_smoothed_v.clear();
-                    weighted_smooth(temp, in_smoothed_v, org_normals, temp_tree1);
-
-                    Tree temp_tree2;
-                    build_KDTree(temp_tree2, in_smoothed_v, indices);
-
-                    if (!opts.isGTNormal) {
-                        estimate_normal_no_normals(pool, in_smoothed_v, temp_tree2, org_normals);
-                    }
-                }
-            }
-        }
-        // else {
-        //     in_smoothed_v = org_vertices;
-        // }
-        return in_smoothed_v;
+    const auto kdTree = build_KDTree(org_vertices, indices);
+    if (opts.isGTNormal) {
+        normalize_normals(org_normals);
+    } else {
+        estimate_normal_no_normals(pool, org_vertices, kdTree, org_normals);
     }
+
+    std::cout << "Start first round smoothing ..." << std::endl;
+    std::vector<Point> in_smoothed_v;
+    in_smoothed_v.reserve(org_vertices.size());
+    if (!opts.isEuclidean)
+        weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree);
+    else
+        // Note: this copies the entire vertices
+        in_smoothed_v = org_vertices;
+
+    const auto temp_tree1 = build_KDTree(in_smoothed_v, indices);
+    if (!opts.isGTNormal) {
+        estimate_normal_no_normals(pool, in_smoothed_v, temp_tree1, org_normals);
+    }
+
+    // Another round of smoothing
+    if (!opts.isEuclidean) {
+        std::cout << "Start second round smoothing ..." << std::endl;
+
+        std::vector<Point> temp;
+        temp.reserve(in_smoothed_v.size());
+        std::swap(temp, in_smoothed_v);
+        in_smoothed_v.clear();
+        weighted_smooth(temp, in_smoothed_v, org_normals, temp_tree1);
+
+        const Tree temp_tree2 = build_KDTree(in_smoothed_v, indices);
+
+        if (!opts.isGTNormal) {
+            estimate_normal_no_normals(pool, in_smoothed_v, temp_tree2, org_normals);
+        }
+    }
+
+    return in_smoothed_v;
 }
 
 struct Components {
@@ -2213,8 +2215,7 @@ auto split_components(std::vector<Point>&& org_vertices, std::vector<Vec3>&& org
         std::iota(indices.begin(), indices.end(), 0);
 
         // Insert number_of_data_points in the tree
-        Tree kdTree;
-        build_KDTree(kdTree, in_smoothed_v, indices);
+        const Tree kdTree = build_KDTree(in_smoothed_v, indices);
 
         // Correct orientation
         //
@@ -2250,8 +2251,7 @@ auto component_to_manifold(
 {
     std::vector<std::vector<NodeID>> faces;
     // Insert the number_of_data_points in the tree
-    Tree kdTree;
-    build_KDTree(kdTree, smoothed_v, indices);
+    Tree kdTree = build_KDTree(smoothed_v, indices);
 
     std::cout << "Init mst" << std::endl;
 
