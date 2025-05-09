@@ -24,12 +24,6 @@ namespace Concepts
         { c.begin() } -> std::random_access_iterator;
     };
 
-    template <typename F, typename In>
-    using OutputOf = std::invoke_result_t<F, In>;
-
-    template <typename F, typename... In>
-    using OutputOfN = std::invoke_result_t<F, In...>;
-
     template <typename F, typename... In>
     using Function = std::is_invocable<F, In...>;
 
@@ -80,7 +74,7 @@ auto parallel_foreach(ThreadPool& pool, F&& f, const InputIt& it) -> void
     if (work_size == 0) {
         return;
     }
-    for (auto i = 0; i < pool_size; ++i) {
+    for (size_t i = 0; i < pool_size; ++i) {
         pool.addTask([i, reduced_size, work_size, &it, &f] {
             const auto max_size = std::min((i + 1) * reduced_size, work_size);
             for (auto j = i * reduced_size; j < max_size; ++j) {
@@ -108,7 +102,7 @@ auto parallel_foreach(ThreadPool& pool, F&& f, const InputIt& it) -> void
 ///
 template <typename F,
           typename InputIt,
-          typename OutputIt = std::vector<OutputOfN<F, typename InputIt::value_type>>,
+          typename OutputIt = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt> &&
@@ -118,7 +112,7 @@ auto parallel_map(
     ThreadPool& pool,
     F&& f,
     const InputIt& it,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>()
 ) -> decltype(out)
 {
     const auto pool_size = pool.size();
@@ -132,7 +126,7 @@ auto parallel_map(
         out.resize(work_size);
     }
 
-    for (auto i = 0; i < pool_size; ++i) {
+    for (size_t i = 0; i < pool_size; ++i) {
         pool.addTask([&out, i, reduced_size, work_size, &it, &f] {
             auto max_size = std::min((i + 1) * reduced_size, work_size);
             for (auto j = i * reduced_size; j < max_size; ++j) {
@@ -161,7 +155,7 @@ auto parallel_map(
 ///
 template <typename F,
           typename InputIt,
-          typename OutputIt = std::vector<OutputOfN<F, typename InputIt::value_type>>,
+          typename OutputIt = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt> &&
@@ -171,7 +165,7 @@ auto parallel_enumerate_map(
     ThreadPool& pool,
     F&& f,
     const InputIt& it,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>()
 ) -> decltype(out)
 {
     const auto pool_size = pool.size();
@@ -185,7 +179,7 @@ auto parallel_enumerate_map(
         out.resize(work_size);
     }
 
-    for (auto i = 0; i < pool_size; ++i) {
+    for (size_t i = 0; i < pool_size; ++i) {
         pool.addTask([&out, i, reduced_size, work_size, &it, &f] {
             auto max_size = std::min((i + 1) * reduced_size, work_size);
             for (auto j = i * reduced_size; j < max_size; ++j) {
@@ -218,7 +212,8 @@ auto parallel_enumerate_map(
 template <typename F,
           typename InputIt1,
           typename InputIt2,
-          typename OutputIt = std::vector<OutputOf<F, typename InputIt1::value_type>>,
+          typename OutputIt = std::vector<std::invoke_result_t<
+              F, typename InputIt1::value_type, typename InputIt2::value_type>>,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt1> &&
@@ -231,7 +226,8 @@ auto parallel_map2(
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<std::invoke_result_t<
+        F, typename InputIt1::value_type, typename InputIt2::value_type>>()
 ) -> decltype(out)
 {
     const auto pool_size = pool.size();
@@ -247,7 +243,7 @@ auto parallel_map2(
         out.resize(work_size);
     }
 
-    for (auto i = 0; i < pool_size; ++i) {
+    for (size_t i = 0; i < pool_size; ++i) {
         pool.addTask([&out, i, reduced_size, work_size, &it1, &it2, &f] {
             auto max_size = std::min((i + 1) * reduced_size, work_size);
             for (auto j = i * reduced_size; j < max_size; ++j) {
@@ -286,7 +282,7 @@ auto parallel_filter(
     ThreadPool& pool,
     F&& p,
     const InputIt& it,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<typename InputIt::value_type>()
 ) -> decltype(out)
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
@@ -304,7 +300,7 @@ auto parallel_filter(
     }
     // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
-    for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
+    for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
         thread_counter = 0;
         pool.addTask([&out, thread_id, reduced_size, work_size, &it, &p, &thread_counter] {
@@ -335,7 +331,7 @@ auto parallel_filter(
     }
 
     auto end_of_chunk = out.begin() + counters.at(0);
-    for (auto chunk = 1; chunk < pool_size; ++chunk) {
+    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
         auto chunk_size = counters[chunk];
         auto chunk_begin = out.begin() + chunk * reduced_size;
         auto chunk_end = chunk_begin + chunk_size;
@@ -360,7 +356,7 @@ auto parallel_filter(
 ///
 template <typename F,
           typename InputIt,
-          typename OutputIt = std::vector<typename OutputOf<F, typename InputIt::value_type>::value_type>,
+          typename OutputIt = std::vector<typename std::invoke_result_t<F, typename InputIt::value_type>::value_type>,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt> &&
@@ -371,7 +367,7 @@ auto parallel_map_filter(
     ThreadPool& pool,
     F&& f,
     const InputIt& it,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<typename std::invoke_result_t<F, typename InputIt::value_type>::value_type>()
 ) -> decltype(out)
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
@@ -422,7 +418,7 @@ auto parallel_map_filter(
     }
 
     auto end_of_chunk = out.begin() + counters.at(0);
-    for (auto chunk = 1; chunk < pool_size; ++chunk) {
+    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
         auto chunk_size = counters[chunk];
         auto chunk_begin = out.begin() + chunk * reduced_size;
         auto chunk_end = chunk_begin + chunk_size;
@@ -447,19 +443,20 @@ auto parallel_map_filter(
 ///
 template <typename F,
           typename InputIt,
-          typename OutputIt = std::vector<typename OutputOfN<F, size_t, typename InputIt::value_type>::value_type>,
+          typename OutputIt = std::vector<typename std::invoke_result_t<
+              F, size_t, typename InputIt::value_type>::value_type>,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt> &&
     ContiguousSizedCollection<OutputIt>
 // &&
-    //BinaryFunction<F, size_t, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
-     //                 OutputIt>::value_type>>
+//BinaryFunction<F, size_t, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
+//                 OutputIt>::value_type>>
 auto parallel_enumerate_map_filter(
     ThreadPool& pool,
     F&& f,
     const InputIt& it,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<typename std::invoke_result_t<F, size_t, typename InputIt::value_type>::value_type>()
 ) -> decltype(out)
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
@@ -477,7 +474,7 @@ auto parallel_enumerate_map_filter(
     }
     // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
-    for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
+    for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
         thread_counter = 0;
         pool.addTask([&out, thread_id, reduced_size, work_size, &it, &f, &thread_counter] {
@@ -510,7 +507,7 @@ auto parallel_enumerate_map_filter(
     }
 
     auto end_of_chunk = out.begin() + counters.at(0);
-    for (auto chunk = 1; chunk < pool_size; ++chunk) {
+    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
         auto chunk_size = counters[chunk];
         auto chunk_begin = out.begin() + chunk * reduced_size;
         auto chunk_end = chunk_begin + chunk_size;
@@ -538,7 +535,7 @@ auto parallel_enumerate_map_filter(
 template <typename F,
           typename InputIt1,
           typename InputIt2,
-          typename OutputIt = std::vector<typename OutputOfN<
+          typename OutputIt = std::vector<typename std::invoke_result_t<
               F, typename InputIt1::value_type, typename InputIt2::value_type>::value_type>,
           bool BoundsChecking = false>
     requires
@@ -552,7 +549,8 @@ auto parallel_map2_filter(
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
-    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+    OutputIt&& out = std::vector<typename std::invoke_result_t<
+        F, typename InputIt1::value_type, typename InputIt2::value_type>::value_type>()
 ) -> decltype(out)
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
@@ -572,7 +570,7 @@ auto parallel_map2_filter(
     }
     // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
-    for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
+    for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
         thread_counter = 0;
         pool.addTask([&out, thread_id, reduced_size, work_size, &it1, &f, &thread_counter, &it2] {
@@ -609,7 +607,7 @@ auto parallel_map2_filter(
     }
 
     auto end_of_chunk = out.begin() + counters.at(0);
-    for (auto chunk = 1; chunk < pool_size; ++chunk) {
+    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
         auto chunk_size = counters[chunk];
         auto chunk_begin = out.begin() + chunk * reduced_size;
         auto chunk_end = chunk_begin + chunk_size;
@@ -640,11 +638,11 @@ template <typename F,
           // TODO: the default types for these seem to be causing some problems
           typename OutputIt1 =
           std::vector<
-              typename OutputOfN<F, typename InputIt1::value_type, typename InputIt2::value_type>
+              typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
               ::value_type::first_type>,
           typename OutputIt2 =
           std::vector<
-              typename OutputOfN<F, typename InputIt1::value_type, typename InputIt2::value_type>
+              typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
               ::value_type::second_type>,
           bool BoundsChecking = false>
     requires
@@ -661,8 +659,12 @@ auto parallel_map2_filter2(
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
-    OutputIt1&& out1 = std::vector<typename OutputIt1::value_type>(),
-    OutputIt2&& out2 = std::vector<typename OutputIt2::value_type>()
+    OutputIt1&& out1 = std::vector<
+        typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+        ::value_type::first_type>(),
+    OutputIt2&& out2 = std::vector<
+        typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+        ::value_type::second_type>()
 ) -> std::pair<decltype(out1), decltype(out2)>
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
@@ -687,7 +689,7 @@ auto parallel_map2_filter2(
     }
     // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
-    for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
+    for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
         thread_counter = 0;
         pool.addTask([&out1, thread_id, reduced_size, work_size, &it1, &f, &thread_counter, &it2, out2] {
@@ -727,7 +729,7 @@ auto parallel_map2_filter2(
 
     auto fix_chunks = [pool_size](auto& target, const auto& counter, auto max_chunk_size, auto total_size) {
         auto end_of_chunk1 = target.begin() + counter.at(0);
-        for (auto chunk = 1; chunk < pool_size; ++chunk) {
+        for (size_t chunk = 1; chunk < pool_size; ++chunk) {
             auto this_chunk_size = counter[chunk];
             auto chunk_begin = target.begin() + chunk * max_chunk_size;
             auto chunk_end = chunk_begin + this_chunk_size;
@@ -761,11 +763,11 @@ template <typename F,
           // TODO: the default types for these seem to be causing some problems
           typename OutputIt1 =
           std::vector<
-              typename OutputOfN<F, typename InputIt1::value_type, typename InputIt2::value_type>
+              typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
               ::value_type::first_type>,
           typename OutputIt2 =
           std::vector<
-              typename OutputOfN<F, typename InputIt1::value_type, typename InputIt2::value_type>
+              typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
               ::value_type::second_type>,
           bool BoundsChecking = false>
     requires
@@ -782,8 +784,12 @@ auto parallel_enumerate_map2_filter2(
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
-    OutputIt1&& out1 = std::vector<typename OutputIt1::value_type>(),
-    OutputIt2&& out2 = std::vector<typename OutputIt2::value_type>()
+    OutputIt1&& out1 = std::vector<
+        typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+        ::value_type::first_type>(),
+    OutputIt2&& out2 = std::vector<
+        typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+        ::value_type::second_type>()
 )
 //-> std::pair<decltype(out1), decltype(out2)>
 {
@@ -795,7 +801,7 @@ auto parallel_enumerate_map2_filter2(
     }();
     const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
     if (work_size == 0) {
-    //    return std::make_pair(std::forward<OutputIt1&&>(out1), std::forward<OutputIt2&&>(out2));
+        //    return std::make_pair(std::forward<OutputIt1&&>(out1), std::forward<OutputIt2&&>(out2));
         return;
     }
     if (out1.size() != work_size) {
@@ -810,7 +816,7 @@ auto parallel_enumerate_map2_filter2(
     }
     // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
-    for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
+    for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
         thread_counter = 0;
         pool.addTask([&out1, thread_id, reduced_size, work_size, &it1, &f, &thread_counter, &it2, &out2] {
@@ -850,7 +856,7 @@ auto parallel_enumerate_map2_filter2(
 
     auto fix_chunks = [pool_size](auto& target, const auto& counter, auto max_chunk_size, auto total_size) {
         auto end_of_chunk1 = target.begin() + counter.at(0);
-        for (auto chunk = 1; chunk < pool_size; ++chunk) {
+        for (size_t chunk = 1; chunk < pool_size; ++chunk) {
             auto this_chunk_size = counter[chunk];
             auto chunk_begin = target.begin() + chunk * max_chunk_size;
             auto chunk_end = chunk_begin + this_chunk_size;
@@ -864,8 +870,6 @@ auto parallel_enumerate_map2_filter2(
 
     // return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
 }
-
-
 } // namespace GEL::Util
 
 #endif //GEL_UTIL_PARALLELADAPTERS_H
