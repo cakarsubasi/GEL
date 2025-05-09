@@ -52,6 +52,7 @@ inline bool neighbor_comparator(const m_neighbor_pair& l, const m_neighbor_pair&
     * @return None
     */
 // TODO: We can cache search result for every point after smoothing
+// TODO: weighted smoothing version doesn't use distances
 template <typename DistType>
 void kNN_search(const Point& query, const Tree& kdTree,
                 int num, std::vector<NodeID>& neighbors,
@@ -631,75 +632,143 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int thre
 * @param smoothed_v: [OUT] vertices after smoothing
 * @param normals: normal of the point cloud
 * @param kdTree: kd-tree for knn query
-* \@param tr_dist: distance container
 *
 * @return None
 */
-void weighted_smooth(const std::vector<Point>& vertices,
-                     std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
-                     const Tree& kdTree)
+void weighted_smooth(
+    Util::ThreadPool& pool,
+    const std::vector<Point>& vertices,
+    std::vector<Point>& smoothed_v,
+    const std::vector<Vec3>& normals,
+    const Tree& kdTree)
 {
     int idx = 0;
     double last_dist = INFINITY;
     Point last_v(0., 0., 0.);
-    for (auto& vertex : vertices) {
-        std::vector<NodeID> neighbors;
-        std::vector<double> neighbor_dist;
-        Vec3 normal = normals[idx];
+    // TODO: weighted_smooth repeats the neighbor search calculation for every point
+    // for (auto& vertex : vertices) {
+    //     std::vector<NodeID> neighbors;
+    //     std::vector<double> neighbor_dist;
+    //     Vec3 normal = normals[idx];
+    //
+    //     int neighbor_num = 192;
+    //     last_dist += (vertex - last_v).length();
+    //     kNN_search(vertex, kdTree, neighbor_num,
+    //                neighbors, neighbor_dist, true);
+    //     last_dist = neighbor_dist[neighbor_dist.size() - 1];
+    //     last_v = vertex;
+    //
+    //     double weight_sum = 0.;
+    //     double amp_sum = 0.;
+    //     double max_dist = 0.;
+    //     int added = 0;
+    //     std::vector<double> vertical_length;
+    //     std::vector<double> weights;
+    //     for (const auto& neighbor : neighbors) {
+    //         Point neighbor_pos = vertices[neighbor];
+    //         Vec3 n2this = neighbor_pos - vertex;
+    //         if (dot(normals[neighbor], normal) < std::cos(30. / 180. * M_PI)) {
+    //             continue;
+    //         }
+    //         double vertical = dot(n2this, normal);
+    //         double n_dist = (neighbor_pos - vertex).length();
+    //
+    //         double tangential_square = n_dist * n_dist -
+    //             vertical * vertical;
+    //         double tangential_dist = 0.;
+    //         if (tangential_square > 0.)
+    //             tangential_dist = std::sqrt(tangential_square);
+    //         if (!std::isfinite(tangential_dist)) {
+    //             std::cout << n_dist << " " << vertical << std::endl;
+    //             std::cout << "error" << std::endl;
+    //         }
+    //         const float weight = -tangential_dist;
+    //         if (tangential_dist > max_dist)
+    //             max_dist = tangential_dist;
+    //
+    //         weights.push_back(weight);
+    //         vertical_length.push_back(vertical);
+    //         added++;
+    //     }
+    //     for (int i = 0; i < vertical_length.size(); i++) {
+    //         amp_sum += vertical_length[i] * (weights[i] + max_dist);
+    //         weight_sum += weights[i] + max_dist;
+    //     }
+    //
+    //     if (weight_sum == 0.)
+    //         weight_sum = 1.;
+    //     amp_sum /= weight_sum;
+    //     if (!std::isfinite(amp_sum))
+    //         std::cout << "error" << std::endl;
+    //     Vec3 move = amp_sum * normal;
+    //     smoothed_v.push_back(vertex + move);
+    //     idx++;
+    // }
 
-        int neighbor_num = 192;
-        last_dist += (vertex - last_v).length();
+    auto lambda = [&normals, &kdTree, &vertices](const size_t idx, const Point& vertex) {
+        struct Local {
+            NodeID neighbor_id;
+            double distance;
+            double vertical_length;
+            double weight;
+        };
+
+        constexpr int neighbor_num = 192;
+        std::vector<NodeID> neighbors; neighbors.reserve(neighbor_num);
+        std::vector<double> neighbor_dist; neighbor_dist.reserve(neighbor_num);
+        const Vec3 normal = normals[idx];
+
         kNN_search(vertex, kdTree, neighbor_num,
                    neighbors, neighbor_dist, true);
-        last_dist = neighbor_dist[neighbor_dist.size() - 1];
-        last_v = vertex;
 
         double weight_sum = 0.;
         double amp_sum = 0.;
         double max_dist = 0.;
-        int added = 0;
+
         std::vector<double> vertical_length;
         std::vector<double> weights;
-        for (auto& neighbor : neighbors) {
+        for (const auto& neighbor : neighbors) {
             Point neighbor_pos = vertices[neighbor];
             Vec3 n2this = neighbor_pos - vertex;
             if (dot(normals[neighbor], normal) < std::cos(30. / 180. * M_PI)) {
                 continue;
             }
             double vertical = dot(n2this, normal);
-            double n_dist = (neighbor_pos - vertex).length();
+            const double n_dist = (neighbor_pos - vertex).length();
 
             double tangential_square = n_dist * n_dist -
                 vertical * vertical;
             double tangential_dist = 0.;
             if (tangential_square > 0.)
                 tangential_dist = std::sqrt(tangential_square);
+
+            [[unlikely]]
             if (!std::isfinite(tangential_dist)) {
                 std::cout << n_dist << " " << vertical << std::endl;
                 std::cout << "error" << std::endl;
             }
-            float weight = -tangential_dist;
+
+            const float weight = -tangential_dist;
             if (tangential_dist > max_dist)
                 max_dist = tangential_dist;
 
             weights.push_back(weight);
             vertical_length.push_back(vertical);
-            added++;
         }
         for (int i = 0; i < vertical_length.size(); i++) {
             amp_sum += vertical_length[i] * (weights[i] + max_dist);
             weight_sum += weights[i] + max_dist;
         }
 
-        if (weight_sum == 0.)
-            weight_sum = 1.;
+        weight_sum = (weight_sum == 0.) ? 1. : weight_sum;
+
         amp_sum /= weight_sum;
         if (!std::isfinite(amp_sum))
             std::cout << "error" << std::endl;
-        Vec3 move = amp_sum * normal;
-        smoothed_v.push_back(vertex + move);
-        idx++;
-    }
+        const Vec3 move = amp_sum * normal;
+        return vertex + move;
+    };
+    GEL::Util::parallel_enumerate_map(pool, lambda, vertices, smoothed_v);
 }
 
 auto normalize_normals(std::vector<Vec3>& normals) -> void
@@ -2165,7 +2234,7 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
     std::vector<Point> in_smoothed_v;
     in_smoothed_v.reserve(org_vertices.size());
     if (!opts.isEuclidean)
-        weighted_smooth(org_vertices, in_smoothed_v, org_normals, kdTree);
+        weighted_smooth(pool, org_vertices, in_smoothed_v, org_normals, kdTree);
     else
         // Note: this copies the entire vertices
         in_smoothed_v = org_vertices;
@@ -2183,7 +2252,7 @@ auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<V
         temp.reserve(in_smoothed_v.size());
         std::swap(temp, in_smoothed_v);
         in_smoothed_v.clear();
-        weighted_smooth(temp, in_smoothed_v, org_normals, temp_tree1);
+        weighted_smooth(pool, temp, in_smoothed_v, org_normals, temp_tree1);
 
         const Tree temp_tree2 = build_KDTree(in_smoothed_v, indices);
 

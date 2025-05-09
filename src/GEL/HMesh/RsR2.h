@@ -287,9 +287,9 @@ void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& sm
 int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target,
                        int threshold, std::vector<NodeID>& path);
 
-void weighted_smooth(const std::vector<Point>& vertices,
-                     std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
-                     const Tree& kdTree);
+// void weighted_smooth(const std::vector<Point>& vertices,
+//                      std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
+//                      const Tree& kdTree);
 
 // void estimate_normal(const std::vector<Point>& vertices,
 //                      const Tree& kdTree, std::vector<Vec3>& normals,
