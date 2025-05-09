@@ -432,6 +432,94 @@ auto parallel_map_filter(
     return std::forward<OutputIt>(out);
 }
 
+/// @brief perform a map and a filter operation simultaneously over an enumerated iterator
+/// @tparam F a binary function type of the form (size_t, T) -> std::optional<U>
+/// @tparam InputIt An input iterator type that yields elements of T
+/// @tparam OutputIt An output iterator type that takes elements of type U; uses std::vector<U> if unspecified
+/// @tparam BoundsChecking Whether to perform bound checking in the iterators
+/// @param pool The threadpool to use
+/// @param f the function to map-filter over
+/// @param it the input iterator
+/// @param out the output iterator; std::vector<U> by default
+/// @return the output iterator by value
+///
+template <typename F,
+          typename InputIt,
+          typename OutputIt = std::vector<typename OutputOfN<F, size_t, typename InputIt::value_type>::value_type>,
+          bool BoundsChecking = false>
+    requires
+    ContiguousSizedCollection<InputIt> &&
+    ContiguousSizedCollection<OutputIt>
+// &&
+    //BinaryFunction<F, size_t, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
+     //                 OutputIt>::value_type>>
+auto parallel_enumerate_map_filter(
+    ThreadPool& pool,
+    F&& f,
+    const InputIt& it,
+    OutputIt&& out = std::vector<typename OutputIt::value_type>()
+) -> decltype(out)
+{
+    // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
+    // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
+    const auto pool_size = pool.size();
+    const auto work_size = it.size();
+    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    if (work_size == 0) {
+        return std::forward<OutputIt>(out);
+    }
+    if (out.size() != work_size) {
+        out.reserve(work_size);
+        // safety post-condition: we need to manually resize out to the correct size at the end
+        out.resize(work_size);
+    }
+    // TODO: move this to a scratch space so we amortize its creation
+    std::vector<size_t> counters(pool_size, 0);
+    for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
+        auto& thread_counter = counters[thread_id];
+        thread_counter = 0;
+        pool.addTask([&out, thread_id, reduced_size, work_size, &it, &f, &thread_counter] {
+            auto max_size = std::min((thread_id + 1) * reduced_size, work_size);
+            auto begin = thread_id * reduced_size;
+            for (auto j = begin; j < max_size; ++j) {
+                if constexpr (BoundsChecking) {
+                    const auto& input_value = it.at(j);
+                    if (const auto&& result = f(j, input_value); result.has_value()) {
+                        auto inner = std::move(result.value());
+                        out.at(begin + thread_counter) = inner;
+                        thread_counter++;
+                    }
+                } else {
+                    const auto& input_value = it[j];
+                    if (const auto&& result = f(j, input_value); result.has_value()) {
+                        auto inner = std::move(result.value());
+                        out[begin + thread_counter] = inner;
+                        thread_counter++;
+                    }
+                }
+            }
+        });
+    }
+    pool.waitAll();
+
+    decltype(counters)::value_type total_size = 0;
+    for (const auto& counter : counters) {
+        total_size += counter;
+    }
+
+    auto end_of_chunk = out.begin() + counters.at(0);
+    for (auto chunk = 1; chunk < pool_size; ++chunk) {
+        auto chunk_size = counters[chunk];
+        auto chunk_begin = out.begin() + chunk * reduced_size;
+        auto chunk_end = chunk_begin + chunk_size;
+        std::copy(chunk_begin, chunk_end, end_of_chunk);
+        end_of_chunk += chunk_size;
+    }
+    out.resize(total_size);
+
+    return std::forward<OutputIt>(out);
+}
+
 /// @brief perform a map and a filter operation simultaneously over two input iterators
 /// @tparam F a binary function type of the form (T, U) -> std::optional<V>
 /// @tparam InputIt1 An input iterator type that yields elements of T
@@ -562,6 +650,7 @@ template <typename F,
     ContiguousSizedCollection<InputIt2> &&
     ContiguousSizedCollection<OutputIt1> &&
     ContiguousSizedCollection<OutputIt2>
+// TODO: fix this
 // &&
 //     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type ,std::optional<
 //      std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename std::remove_reference_t<OutputIt2>::value_type>>>
@@ -682,6 +771,7 @@ template <typename F,
     ContiguousSizedCollection<InputIt2> &&
     ContiguousSizedCollection<OutputIt1> &&
     ContiguousSizedCollection<OutputIt2>
+// TODO: fix this requirement
 // &&
 //     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type ,std::optional<
 //      std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename std::remove_reference_t<OutputIt2>::value_type>>>
@@ -692,7 +782,8 @@ auto parallel_enumerate_map2_filter2(
     const InputIt2& it2,
     OutputIt1&& out1 = std::vector<typename OutputIt1::value_type>(),
     OutputIt2&& out2 = std::vector<typename OutputIt2::value_type>()
-) -> std::pair<decltype(out1), decltype(out2)>
+)
+//-> std::pair<decltype(out1), decltype(out2)>
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
@@ -702,7 +793,8 @@ auto parallel_enumerate_map2_filter2(
     }();
     const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
     if (work_size == 0) {
-        return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
+    //    return std::make_pair(std::forward<OutputIt1&&>(out1), std::forward<OutputIt2&&>(out2));
+        return;
     }
     if (out1.size() != work_size) {
         out1.reserve(work_size);
@@ -768,8 +860,10 @@ auto parallel_enumerate_map2_filter2(
     fix_chunks(out1, counters, reduced_size, total_size);
     fix_chunks(out2, counters, reduced_size, total_size);
 
-    return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
+    // return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
 }
+
+
 } // namespace GEL::Util
 
 #endif //GEL_UTIL_PARALLELADAPTERS_H
