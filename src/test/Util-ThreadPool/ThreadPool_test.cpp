@@ -50,10 +50,12 @@ bool test_oracle()
     return true;
 }
 
-TEST_CASE("parallel_map")
+TEST_CASE("deadlock")
 {
-    CHECK(test_empty());
-    test_oracle();
+    for (int i = 0; i < 10000; ++i) {
+        CHECK(test_empty());
+        test_oracle();
+    }
 }
 
 
@@ -273,6 +275,7 @@ TEST_CASE("parallel_filter_correctness")
 
 TEST_CASE("parallel_map_filter_correctness")
 {
+    // TODO: There might be a race condition that causes a deadlock here
     ThreadPool pool(3);
     const auto v = [] {
         std::vector<int> v(10);
@@ -291,5 +294,64 @@ TEST_CASE("parallel_map_filter_correctness")
     CHECK(out.size() == 5);
     for (auto id = 0; id < out.size(); ++id) {
         CHECK(out.at(id) == id * 4);
+    }
+}
+
+TEST_CASE("parallel_enumerate_map_filter_correctness")
+{
+    ThreadPool pool(3);
+    const auto v = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto times_two_is_even = [](size_t idx, int x) -> std::optional<int> {
+        if (x % 2 == 0) { return std::make_optional(x * 2 + idx); }
+        else { return std::nullopt; }
+    };
+    std::vector<int> out;
+
+    // TODO: map_filter should check if the passed function actually returns an optional
+    auto& out2 = parallel_enumerate_map_filter(pool, times_two_is_even, v, out);
+    CHECK(&out2 == &out);
+    CHECK(out.size() == 5);
+    for (auto id = 0; id < out.size(); ++id) {
+        CHECK(out.at(id) == id * 6);
+    }
+}
+
+TEST_CASE("parallel_enumerate_map2_filter2_correctness")
+{
+    ThreadPool pool(3);
+    const auto v1 = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto v2 = [] {
+        std::vector<int> v(10);
+        std::iota(v.begin(), v.end(), 0);
+        return v;
+    }();
+    const auto times_two_is_even = [](size_t idx, int x, int y) -> std::optional<std::pair<int, int>> {
+        if (x % 2 == 0) { return std::make_optional(std::make_pair(x, y)); }
+        else { return std::nullopt; }
+    };
+    std::vector<int> out1;
+    std::vector<int> out2;
+    auto& out1_ref = out1;
+    auto& out2_ref = out2;
+
+    // TODO: map_filter should check if the passed function actually returns an optional
+    parallel_enumerate_map2_filter2(pool, times_two_is_even, v1, v2, out1, out2);
+    //CHECK(&out2 == &out);
+    CHECK(out1.size() == 5);
+    CHECK(out2.size() == 5);
+
+    for (auto id = 0; id < out1.size(); ++id) {
+        CHECK(out1.at(id) == id * 2);
+    }
+    for (auto id = 0; id < out2.size(); ++id) {
+        CHECK(out2.at(id) == id * 2);
     }
 }
