@@ -2,8 +2,6 @@
 // Created by Cem Akarsubasi on 5/5/25.
 //
 // TODO: examples
-// TODO: map2, map3
-// TODO: fold
 
 #ifndef GEL_UTIL_PARALLELADAPTERS_H
 #define GEL_UTIL_PARALLELADAPTERS_H
@@ -104,7 +102,7 @@ auto parallel_foreach(ThreadPool& pool, F&& f, const InputIt& it) -> void
 {
     const auto pool_size = pool.size();
     const auto work_size = it.size();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return;
     }
@@ -229,7 +227,7 @@ auto parallel_map(
 ///
 template <typename F,
           typename InputIt,
-          typename OutputIt = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>,
+          typename OutputIt = std::vector<std::invoke_result_t<F, size_t, typename InputIt::value_type>>,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt> &&
@@ -239,7 +237,7 @@ auto parallel_enumerate_map(
     ThreadPool& pool,
     F&& f,
     const InputIt& it,
-    OutputIt&& out = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>()
+    OutputIt&& out = std::vector<std::invoke_result_t<F, size_t, typename InputIt::value_type>>()
 ) -> decltype(out)
 {
     const auto pool_size = pool.size();
@@ -837,11 +835,11 @@ template <typename F,
           // TODO: the default types for these seem to be causing some problems
           typename OutputIt1 =
           std::vector<
-              typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+              typename std::invoke_result_t<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type>
               ::value_type::first_type>,
           typename OutputIt2 =
           std::vector<
-              typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+              typename std::invoke_result_t<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type>
               ::value_type::second_type>,
           bool BoundsChecking = false>
     requires
