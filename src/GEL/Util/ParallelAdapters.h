@@ -25,20 +25,28 @@ namespace Concepts
     template <typename F, typename... In>
     using Function = std::is_invocable<F, In...>;
 
-    template <typename F, typename T, typename U>
+    template <typename F, typename A, typename R>
     concept UnaryFunction =
-        requires(T a, F f)
+        requires(A a, F f)
         {
             { std::is_invocable<F, decltype(a)>() };
-            { f(a) } -> std::convertible_to<U>;
+            { f(a) } -> std::convertible_to<R>;
         };
 
-    template <typename F, typename T, typename U, typename V>
+    template <typename F, typename A, typename B, typename R>
     concept BinaryFunction =
-        requires(T a, U b, F f)
+        requires(A a, B b, F f)
         {
             { std::is_invocable<F, decltype(a), decltype(b)>() };
-            { f(a, b) } -> std::convertible_to<V>;
+            { f(a, b) } -> std::convertible_to<R>;
+        };
+
+    template <typename F, typename A, typename B, typename C, typename R>
+    concept TernaryFunction =
+        requires(A a, B b, C c, F f)
+        {
+            { std::is_invocable<F, decltype(a), decltype(b), decltype(c)>() };
+            { f(a, b, c) } -> std::convertible_to<R>;
         };
 
     static constexpr auto identity = []<typename T0>(T0 x) -> T0 {
@@ -60,8 +68,7 @@ namespace ParallelUtil
     constexpr size_t smallest_size(const Iterator& list1, const Iterators&... lists)
     {
         size_t min_size = std::numeric_limits<size_t>::max();
-        std::array<size_t, sizeof...(lists) + 1> sizes = {list1.size(), std::size(lists...)};
-        for (auto size : sizes) {
+        for (std::array<size_t, sizeof...(lists) + 1> sizes = {list1.size(), std::size(lists...)}; auto size : sizes) {
             if (size < min_size) {
                 min_size = size;
             }
@@ -79,6 +86,24 @@ namespace ParallelUtil
     constexpr IntegerType div_ceil(IntegerType lhs, IntegerType rhs)
     {
         return lhs / rhs + (lhs % rhs != 0);
+    }
+
+    /// @brief Wraps up
+    /// @return
+    template <typename T1, typename T2>
+    auto make_pair_wrapper(T1&& t1, T2&& t2)
+    {
+        if constexpr (std::is_lvalue_reference_v<T1> && std::is_lvalue_reference_v<T2>) {
+            return std::make_pair(
+                std::ref(t1),
+                std::ref(t2)
+            );
+        } else {
+            return std::make_pair(
+                std::forward<T1>(t1),
+                std::forward<T2>(t2)
+            );
+        }
     }
 }
 
@@ -303,10 +328,8 @@ auto parallel_map2(
 ) -> decltype(out)
 {
     const auto pool_size = pool.size();
-    const auto work_size = [&] {
-        return it1.size() > it2.size() ? it2.size() : it1.size();
-    }();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto work_size = ParallelUtil::smallest_size(it1, it2);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return std::forward<OutputIt>(out);
     }
@@ -323,6 +346,65 @@ auto parallel_map2(
                     out.at(j) = f(it1.at(j), it2.at(j));
                 } else {
                     out[j] = f(it1[j], it2[j]);
+                }
+            }
+        });
+    }
+    pool.waitAll();
+    return std::forward<OutputIt>(out);
+}
+
+/// @brief Map over an iterator with the indexes
+/// @tparam F a ternary function type of the form (size_t, T, U) -> V
+/// @tparam InputIt1 An input iterator type that yields elements of T
+/// @tparam InputIt2 An input iterator type that yields elements of U
+/// @tparam OutputIt An output iterator type that takes elements of type V; uses std::vector<V> if unspecified
+/// @tparam BoundsChecking Whether to perform bound checking in the iterators
+/// @param pool The threadpool to use
+/// @param f the function to map over
+/// @param it1 the first input iterator
+/// @param it2 the second input iterator
+/// @param out the output iterator; std::vector<V> by default
+/// @return the forwarded output iterator.
+///
+template <typename F,
+          typename InputIt1,
+          typename InputIt2,
+          typename OutputIt = std::vector<std::invoke_result_t<F, size_t, typename InputIt1::value_type>>,
+          bool BoundsChecking = false>
+    requires
+    ContiguousSizedCollection<InputIt1> &&
+    ContiguousSizedCollection<OutputIt> &&
+    TernaryFunction<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type, typename
+                    std::remove_reference_t<OutputIt>::value_type>
+auto parallel_enumerate_map2(
+    ThreadPool& pool,
+    F&& f,
+    const InputIt1& it1,
+    const InputIt2& it2,
+    OutputIt&& out = std::vector<std::invoke_result_t<
+        F, size_t, typename InputIt1::value_type, typename InputIt2::value_type>>()
+) -> decltype(out)
+{
+    const auto pool_size = pool.size();
+    const auto work_size = ParallelUtil::smallest_size(it1, it2);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
+    if (work_size == 0) {
+        return std::forward<OutputIt>(out);
+    }
+    if (out.size() != work_size) {
+        out.reserve(work_size);
+        out.resize(work_size);
+    }
+
+    for (size_t i = 0; i < pool_size; ++i) {
+        pool.addTask([&out, i, reduced_size, work_size, &it1, &it2, &f] {
+            auto max_size = std::min((i + 1) * reduced_size, work_size);
+            for (auto j = i * reduced_size; j < max_size; ++j) {
+                if constexpr (BoundsChecking) {
+                    out.at(j) = f(j, it1.at(j), it2.at(j));
+                } else {
+                    out[j] = f(j, it1[j], it2[j]);
                 }
             }
         });
@@ -361,7 +443,7 @@ auto parallel_filter(
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
     const auto pool_size = pool.size();
     const auto work_size = it.size();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return std::forward<OutputIt>(out);
     }
@@ -446,7 +528,7 @@ auto parallel_map_filter(
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
     const auto pool_size = pool.size();
     const auto work_size = it.size();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return std::forward<OutputIt>(out);
     }
@@ -535,7 +617,7 @@ auto parallel_enumerate_map_filter(
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
     const auto pool_size = pool.size();
     const auto work_size = it.size();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return std::forward<OutputIt>(out);
     }
@@ -628,10 +710,8 @@ auto parallel_map2_filter(
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
     const auto pool_size = pool.size();
-    const auto work_size = [&] {
-        return it1.size() > it2.size() ? it2.size() : it1.size();
-    }();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto work_size = ParallelUtil::smallest_size(it1, it2);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return std::forward<OutputIt>(out);
     }
@@ -742,10 +822,8 @@ auto parallel_map2_filter2(
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
     const auto pool_size = pool.size();
-    const auto work_size = [&] {
-        return it1.size() > it2.size() ? it2.size() : it1.size();
-    }();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto work_size = ParallelUtil::smallest_size(it1, it2);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
         return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
     }
@@ -816,6 +894,7 @@ auto parallel_map2_filter2(
     return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
 }
 
+
 /// @brief perform a map operation over two input iterators and a filter operation through two output iterators
 /// @tparam F a ternary function type of the form (size_t, T, U) -> std::optional<std::pair<V, W>>
 /// @tparam InputIt1 An input iterator type that yields elements of T
@@ -863,18 +942,15 @@ auto parallel_enumerate_map2_filter2(
         typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
         ::value_type::second_type>()
 )
-//-> std::pair<decltype(out1), decltype(out2)>
+    -> std::pair<decltype(std::forward<OutputIt1&&>(out1)), decltype(std::forward<OutputIt2&&>(out2))>
 {
     // strategy: we allocate out to the same size as it, every thread has its own counter, and when they are all done,
     // we perform a serial memcpy. memcpy is memory-bound, meaning there is not a lot to gain from parallelization.
     const auto pool_size = pool.size();
-    const auto work_size = [&] {
-        return it1.size() > it2.size() ? it2.size() : it1.size();
-    }();
-    const auto reduced_size = work_size / pool_size + (work_size % pool_size != 0);
+    const auto work_size = ParallelUtil::smallest_size(it1, it2);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
     if (work_size == 0) {
-        //    return std::make_pair(std::forward<OutputIt1&&>(out1), std::forward<OutputIt2&&>(out2));
-        return;
+        return ParallelUtil::make_pair_wrapper(std::forward<OutputIt1&&>(out1), std::forward<OutputIt2&&>(out2));
     }
     if (out1.size() != work_size) {
         out1.reserve(work_size);
@@ -940,8 +1016,9 @@ auto parallel_enumerate_map2_filter2(
     fix_chunks(out1, counters, reduced_size, total_size);
     fix_chunks(out2, counters, reduced_size, total_size);
 
-    // return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
+    return ParallelUtil::make_pair_wrapper(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
 }
+
 } // namespace GEL::Util
 
 #endif //GEL_UTIL_PARALLELADAPTERS_H
