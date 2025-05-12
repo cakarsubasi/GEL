@@ -50,6 +50,40 @@ namespace Concepts
     static_assert(UnaryFunction<decltype(identity), float, float>);
 } // namespace Concepts
 
+namespace ParallelUtil
+{
+    /// @brief variadic function to find the shortest iterator
+    /// @tparam Iterator The first iterator
+    /// @tparam Iterators Other iterators
+    /// @param list1 The first iterator
+    /// @param lists Further iterators
+    /// @return The length of the shortest iterator
+    template <typename Iterator, typename... Iterators>
+    constexpr size_t smallest_size(const Iterator& list1, const Iterators&... lists)
+    {
+        size_t min_size = std::numeric_limits<size_t>::max();
+        std::array<size_t, sizeof...(lists) + 1> sizes = {list1.size(), std::size(lists...)};
+        for (auto size : sizes) {
+            if (size < min_size) {
+                min_size = size;
+            }
+        }
+        return min_size;
+    }
+
+    /// @brief Ceiling division
+    /// @tparam IntegerType Integral type
+    /// @param lhs lhs
+    /// @param rhs rhs
+    /// @return ceil(lhs / div)
+    template <typename IntegerType>
+        requires std::is_integral_v<IntegerType>
+    constexpr IntegerType div_ceil(IntegerType lhs, IntegerType rhs)
+    {
+        return lhs / rhs + (lhs % rhs != 0);
+    }
+}
+
 using namespace Concepts;
 
 ///
