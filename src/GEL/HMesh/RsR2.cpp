@@ -121,12 +121,19 @@ void knn_search(const Point& query, const Tree& kdTree,
     }
 }
 
-auto calculate_neighbors(Util::ThreadPool& pool, const std::vector<Point>& vertices, const Tree& kdTree, const int k)
+auto calculate_neighbors(
+    Util::ThreadPool& pool,
+    const std::vector<Point>& vertices,
+    const Tree& kdTree,
+    const int k,
+    std::vector<std::vector<NeighborInfo>>&& neighbors_memoized = std::vector<std::vector<NeighborInfo>>())
 -> std::vector<std::vector<NeighborInfo>>
 {
-    std::vector<std::vector<NeighborInfo>> neighbors_memoized(vertices.size());
-    for (auto &neighbors : neighbors_memoized) {
-        neighbors.reserve(k);
+    if (neighbors_memoized.empty()) {
+        neighbors_memoized = std::vector<std::vector<NeighborInfo>>(vertices.size());
+        for (auto &neighbors : neighbors_memoized) {
+            neighbors.reserve(k);
+        }
     }
 
     auto cache_kNN_search = [kdTree, k](auto vertex, auto& neighbor) {
@@ -341,11 +348,11 @@ void NN_search(const Point& query, const Tree& kdTree,
     *
     * @return None
     */
-double find_components(std::vector<Point>& vertices,
+double find_components(const std::vector<Point>& vertices,
                        std::vector<std::vector<Point>>& component_vertices,
-                       std::vector<Point>& smoothed_v,
+                       const std::vector<Point>& smoothed_v,
                        std::vector<std::vector<Point>>& component_smoothed_v,
-                       std::vector<Vec3>& normals,
+                       const std::vector<Vec3>& normals,
                        std::vector<std::vector<Vec3>>& component_normals,
                        const Tree& kdTree,
                        float cross_conn_thresh,
@@ -353,6 +360,8 @@ double find_components(std::vector<Point>& vertices,
                        int k,
                        bool isEuclidean)
 {
+    assert(vertices.size() == smoothed_v.size());
+    assert(vertices.size() == normals.size());
     double avg_edge_length = 0;
     AMGraph::NodeSet sets;
     SimpGraph components;
@@ -435,7 +444,6 @@ double find_components(std::vector<Point>& vertices,
             NodeID vertex2 = pair.first;
             double edge_length = (vertices[vertex1] - vertices[vertex2]).length();
             if (dup_remove.contains(vertex1)) {
-                //boost::remove_edge(*eit, components);
                 edge_rm_v_id1.push_back(vertex1);
                 edge_rm_v_id2.push_back(vertex2);
                 continue;
@@ -476,8 +484,7 @@ double find_components(std::vector<Point>& vertices,
             for (const auto& element : component) {
                 this_vertices.push_back(vertices[element]);
                 this_smoothed_v.push_back(smoothed_v[element]);
-                if (normals.size() == vertices.size())
-                    this_normals.push_back(normals[element]);
+                this_normals.push_back(normals[element]);
             }
 
             component_normals.push_back(this_normals);
@@ -678,35 +685,21 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int thre
 *
 * @param pool thread pool
 * @param vertices: vertices of the point cloud
-* @param smoothed_v: [OUT] vertices after smoothing
 * @param normals: normal of the point cloud
-* @param kdTree: kd-tree for knn query
+* @param neighbors_
+* @param smoothed_v: [OUT] vertices after smoothing
 *
 * @return None
 */
 void weighted_smooth(
     Util::ThreadPool& pool,
     const std::vector<Point>& vertices,
-    std::vector<Point>& smoothed_v,
     const std::vector<Vec3>& normals,
-    const Tree& kdTree)
+    const std::vector<std::vector<NeighborInfo>>& neighbors_,
+    std::vector<Point>& smoothed_v)
 {
-
-    auto lambda = [&normals, &kdTree, &vertices](const size_t idx, const Point& vertex) {
-        struct Local {
-            NodeID neighbor_id;
-            double distance;
-            double vertical_length;
-            double weight;
-        };
-
-        constexpr int neighbor_num = 192;
-        std::vector<NodeID> neighbors; neighbors.reserve(neighbor_num);
-        std::vector<double> neighbor_dist; neighbor_dist.reserve(neighbor_num);
+    auto lambda = [&normals, &vertices](const size_t idx, const Point& vertex, const std::vector<NeighborInfo>& neighbors) {
         const Vec3 normal = normals[idx];
-
-        knn_search(vertex, kdTree, neighbor_num,
-                   neighbors, neighbor_dist, true);
 
         double weight_sum = 0.;
         double amp_sum = 0.;
@@ -715,15 +708,15 @@ void weighted_smooth(
         std::vector<double> vertical_length;
         std::vector<double> weights;
         for (const auto& neighbor : neighbors) {
-            Point neighbor_pos = vertices[neighbor];
+            Point neighbor_pos = vertices[neighbor.id];
             Vec3 n2this = neighbor_pos - vertex;
-            if (dot(normals[neighbor], normal) < std::cos(30. / 180. * M_PI)) {
+            if (dot(normals[neighbor.id], normal) < std::cos(30. / 180. * M_PI)) {
                 continue;
             }
             double vertical = dot(n2this, normal);
             const double n_dist = (neighbor_pos - vertex).length();
 
-            double tangential_square = n_dist * n_dist -
+            const double tangential_square = n_dist * n_dist -
                 vertical * vertical;
             double tangential_dist = 0.;
             if (tangential_square > 0.)
@@ -731,11 +724,11 @@ void weighted_smooth(
 
             [[unlikely]]
             if (!std::isfinite(tangential_dist)) {
-                std::cout << n_dist << " " << vertical << std::endl;
-                std::cout << "error" << std::endl;
+                std::cerr << n_dist << " " << vertical << std::endl;
+                std::cerr << "error" << std::endl;
             }
 
-            const float weight = -tangential_dist;
+            const double weight = -tangential_dist;
             if (tangential_dist > max_dist)
                 max_dist = tangential_dist;
 
@@ -755,7 +748,7 @@ void weighted_smooth(
         const Vec3 move = amp_sum * normal;
         return vertex + move;
     };
-    GEL::Util::parallel_enumerate_map(pool, lambda, vertices, smoothed_v);
+    Util::parallel_enumerate_map2(pool, lambda, vertices, neighbors_, smoothed_v);
 }
 
 auto normalize_normals(std::vector<Vec3>& normals) -> void
@@ -794,6 +787,32 @@ void estimate_normal_no_normals(
         return normal;
     };
     Util::parallel_map(pool, lambda, vertices, normals);
+}
+
+void estimate_normal_no_normals_memoized(
+    Util::ThreadPool& pool,
+    const std::vector<Point>& vertices,
+    const std::vector<std::vector<NeighborInfo>>& neighbors,
+    std::vector<Vec3>& normals)
+{
+    normals.clear();
+    // Data type transfer & Cal diagonal size
+    auto lambda = [&](const std::vector<NeighborInfo>& neighbors_of_this) {
+        // need id, distance and coords anyway
+
+        std::vector<Point> neighbor_coords;
+        for (const auto neighbor_id : neighbors_of_this) {
+            neighbor_coords.push_back(vertices[neighbor_id.id]);
+        }
+        const Vec3 normal = estimateNormal(neighbor_coords);
+        [[unlikely]]
+        if (std::isnan(normal.length())) {
+            std::cerr << neighbors_of_this.size() << std::endl;
+            std::cerr << "error" << std::endl;
+        }
+        return normal;
+    };
+    Util::parallel_map(pool, lambda, neighbors, normals);
 }
 
 /**
@@ -1433,17 +1452,15 @@ void add_face(RSGraph& G, const std::vector<NodeID>& item,
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<NodeID>>& faces,
                    Tree& KDTree, float edge_length)
 {
-    Vec3 v1_n = mst.m_vertices[v1].normal;
-    Vec3 v2_n = mst.m_vertices[v2].normal;
-    Point p1 = mst.m_vertices[v1].coords;
-    Point p2 = mst.m_vertices[v2].coords;
+    const Point p1 = mst.m_vertices[v1].coords;
+    const Point p2 = mst.m_vertices[v2].coords;
 
     if (mst.find_edge(v1, v2) != AMGraph::InvalidEdgeID)
         return false;
 
     std::vector<NodeID> share_neighbors;
     find_common_neighbor(v1, v2, share_neighbors, mst);
-    if (share_neighbors.size() == 0) {
+    if (share_neighbors.empty()) {
         mst.add_edge(v1, v2, edge_length);
         maintain_face_loop(mst, v1, v2);
         return true;
@@ -1451,7 +1468,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     //if ((v1 == 30045 && v2 == 69461) || v1 == 69461 && v2 == 30045)
     //	std::cout << "debug here" << std::endl;
 
-    auto possible_root1 = predecessor(mst, v1, v2).v;
+    const auto possible_root1 = predecessor(mst, v1, v2).v;
     float angle1 = cal_radians_3d(p1 - mst.m_vertices[possible_root1].coords,
                                   mst.m_vertices[possible_root1].normal, p2 - mst.m_vertices[possible_root1].coords);
     auto possible_root2 = predecessor(mst, v2, v1).v;
@@ -1461,8 +1478,6 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
     bool isValid = true;
     std::vector<std::vector<NodeID>> temp;
     for (auto v3 : share_neighbors) {
-        //if (v3 == 388212)
-        //	std::cout << "debug" << std::endl;
         std::vector<NodeID> triangle{v1, v2, v3};
         if (v3 == possible_root1 && angle1 < M_PI) {
             if (routine_check(mst, triangle)) {
@@ -1505,7 +1520,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
         }
     }
 
-    if (temp.size() == 0)
+    if (temp.empty())
         isValid = false;
 
     if (isValid) {
@@ -1513,7 +1528,6 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
                                                   edge_length);
         maintain_face_loop(mst, v1, v2);
         for (auto& face : temp) {
-            ;
             add_face(mst, face, faces);
         }
     }
@@ -2178,21 +2192,21 @@ void build_mst(
         out_mst.add_node(temp.m_vertices[i].coords, temp.m_vertices[i].normal);
     }
     for (int i = 0; i < temp.m_edges.size(); i++) {
-        Vec3 edge = out_mst.m_vertices[temp.m_edges[i].source].coords -
+        const Vec3 edge = out_mst.m_vertices[temp.m_edges[i].source].coords -
             out_mst.m_vertices[temp.m_edges[i].target].coords;
-        float Euclidean_dist = edge.length();
-        float projection_dist = cal_proj_dist(edge,
-                                              out_mst.m_vertices[temp.m_edges[i].source].normal,
-                                              out_mst.m_vertices[temp.m_edges[i].target].normal);
-        if (std::isnan(projection_dist) || std::isnan(Euclidean_dist))
-            std::cout << "debug" << std::endl;
 
-        if (isEuclidean)
-            out_mst.add_edge(temp.m_edges[i].source,
-                             temp.m_edges[i].target, Euclidean_dist);
-        else
-            out_mst.add_edge(temp.m_edges[i].source,
-                             temp.m_edges[i].target, projection_dist);
+        const double distance =
+            (isEuclidean) ?
+                edge.length() :
+                cal_proj_dist(edge,out_mst.m_vertices[temp.m_edges[i].source].normal,
+                                              out_mst.m_vertices[temp.m_edges[i].target].normal);
+
+        [[unlikely]]
+        if (std::isnan(distance))
+            std::cerr << "debug" << std::endl;
+
+        out_mst.add_edge(temp.m_edges[i].source,
+                 temp.m_edges[i].target, distance);
     }
 }
 
@@ -2215,31 +2229,36 @@ auto estimate_normals_and_smooth(
     const std::vector<NodeID>& indices,
     const RsROpts& opts) -> std::vector<Point>
 {
-    // TODO: reuse the vector for neighbors to reduce allocations
 
     // Insert the number_of_data_points into the tree
     const auto tree_before_remove = build_KDTree(org_vertices, indices);
     remove_duplicate_vertices(pool, org_vertices, org_normals, tree_before_remove, opts.k);
 
+
     const auto kdTree = build_KDTree(org_vertices, indices);
+    auto neighbors =
+        calculate_neighbors(pool, org_vertices, kdTree, std::max(static_cast<int>(org_vertices.size() / 2000.), 192));
     if (opts.isGTNormal) {
         normalize_normals(org_normals);
     } else {
-        estimate_normal_no_normals(pool, org_vertices, kdTree, org_normals);
+        estimate_normal_no_normals_memoized(pool, org_vertices, neighbors, org_normals);
     }
 
     std::cout << "Start first round smoothing ..." << std::endl;
     std::vector<Point> in_smoothed_v;
     in_smoothed_v.reserve(org_vertices.size());
     if (!opts.isEuclidean)
-        weighted_smooth(pool, org_vertices, in_smoothed_v, org_normals, kdTree);
+        weighted_smooth(pool, org_vertices, org_normals, neighbors, in_smoothed_v);
     else
         // Note: this copies the entire vertices
         in_smoothed_v = org_vertices;
 
-    const auto temp_tree1 = build_KDTree(in_smoothed_v, indices);
+
     if (!opts.isGTNormal) {
-        estimate_normal_no_normals(pool, in_smoothed_v, temp_tree1, org_normals);
+        const auto temp_tree1 = build_KDTree(in_smoothed_v, indices);
+        neighbors =
+        calculate_neighbors(pool, org_vertices, temp_tree1, std::max(static_cast<int>(org_vertices.size() / 2000.), 192), std::move(neighbors));
+        estimate_normal_no_normals_memoized(pool, in_smoothed_v, neighbors, org_normals);
     }
 
     // Another round of smoothing
@@ -2250,15 +2269,15 @@ auto estimate_normals_and_smooth(
         temp.reserve(in_smoothed_v.size());
         std::swap(temp, in_smoothed_v);
         in_smoothed_v.clear();
-        weighted_smooth(pool, temp, in_smoothed_v, org_normals, temp_tree1);
-
-        const Tree temp_tree2 = build_KDTree(in_smoothed_v, indices);
+        weighted_smooth(pool, temp, org_normals, neighbors, in_smoothed_v);
 
         if (!opts.isGTNormal) {
-            estimate_normal_no_normals(pool, in_smoothed_v, temp_tree2, org_normals);
+            const Tree temp_tree2 = build_KDTree(in_smoothed_v, indices);
+            calculate_neighbors(pool, org_vertices, temp_tree2, std::max(static_cast<int>(org_vertices.size() / 2000.), 192), std::move(neighbors));
+            estimate_normal_no_normals_memoized(pool, in_smoothed_v, neighbors, org_normals);
         }
     }
-
+    assert(org_vertices.size() == org_normals.size());
     return in_smoothed_v;
 }
 
@@ -2266,6 +2285,14 @@ struct Components {
     std::vector<std::vector<Point>> vertices;
     std::vector<std::vector<Point>> smoothed_v;
     std::vector<std::vector<Vec3>> normals;
+
+    explicit Components(
+        std::vector<std::vector<Point>>&& vertices,
+        std::vector<std::vector<Point>>&& smoothed_v,
+        std::vector<std::vector<Vec3>>&& normals) noexcept
+    : vertices { std::move(vertices) }, smoothed_v { std::move(smoothed_v) }, normals { std::move(normals) } {}
+    Components() = delete;
+    Components(Components& other) = delete;
 };
 
 [[nodiscard]]
@@ -2278,6 +2305,8 @@ auto split_components(
     const RsROpts& opts)
     -> Components
 {
+    assert(org_vertices.size() == org_normals.size());
+    assert(org_vertices.size() == in_smoothed_v.size());
     std::vector<std::vector<Point>> component_vertices;
     std::vector<std::vector<Point>> component_smoothed_v;
     std::vector<std::vector<Vec3>> component_normals;
@@ -2304,14 +2333,15 @@ auto split_components(
 
         in_smoothed_v.clear();
     }
-    return {
-        .vertices = std::move(component_vertices),
-        .smoothed_v = std::move(component_smoothed_v),
-        .normals = std::move(component_normals)
-    };
+    return Components(
+        std::move(component_vertices),
+        std::move(component_smoothed_v),
+        std::move(component_normals)
+    );
 }
 
 auto component_to_manifold(
+    Util::ThreadPool& pool,
     const RsROpts& opts,
     const std::vector<Point>&& vertices,
     const std::vector<Vec3>&& normals,
@@ -2437,8 +2467,8 @@ auto point_cloud_to_mesh(
 {
     auto opts2 = opts;
     ::HMesh::Manifold output;
-    auto org_vertices = vertices;
-    auto org_normals = normals;
+    auto vertices_copy = vertices;
+    auto normals_copy = normals;
     Util::ThreadPool pool(15);
     if (normals.empty()) {
         opts2.isGTNormal = false;
@@ -2456,18 +2486,17 @@ auto point_cloud_to_mesh(
 
     // Estimate normals & orientation & weighted smoothing
     timer.start("Estimate normals");
-    const auto indices = indices_from(org_vertices);
+    const auto indices = indices_from(vertices_copy);
 
-    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(pool, org_vertices, org_normals, indices, opts2);
+    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(pool, vertices_copy, normals_copy, indices, opts2);
     timer.end("Estimate normals");
-
 
     // Find components
     timer.start("algorithm");
     auto [component_vertices,
         component_smoothed_v,
         component_normals] = split_components(pool,
-        std::move(org_vertices), std::move(org_normals), std::move(in_smoothed_v), indices, opts2);
+        std::move(vertices_copy), std::move(normals_copy), std::move(in_smoothed_v), indices, opts2);
     // There is no guarantee that there is more than one component, and components can
     // be highly non-uniform in terms of how many primitives they have. That means we cannot
     // rely on this loop for good parallelization opportunities.
@@ -2475,14 +2504,17 @@ auto point_cloud_to_mesh(
         std::cout << "Reconstructing component " + std::to_string(component_id) + " ...\n";
 
         //std::vector<std::vector<NodeID>> faces;
-        std::vector<Point> vertices = std::move(component_vertices[component_id]);
-        std::vector<Vec3>  normals = std::move(component_normals[component_id]);
-        std::vector<Point> smoothed_v = std::move(component_smoothed_v[component_id]);
+        std::vector<Point> vertices_of_this = std::move(component_vertices[component_id]);
+        std::vector<Vec3>  normals_of_this = std::move(component_normals[component_id]);
+        std::vector<Point> smoothed_v_of_this = std::move(component_smoothed_v[component_id]);
 
-        std::vector<NodeID> indices(smoothed_v.size());
-        std::iota(indices.begin(), indices.end(), 0);
-
-        auto res = component_to_manifold(opts2, std::move(vertices), std::move(normals), std::move(smoothed_v), indices);
+        auto res = component_to_manifold(
+            pool,
+            opts2,
+            std::move(vertices_of_this),
+            std::move(normals_of_this),
+            std::move(smoothed_v_of_this),
+            indices);
         output.merge(res);
     }
     timer.end("algorithm");
@@ -2490,6 +2522,7 @@ auto point_cloud_to_mesh(
 
     const std::string line(40, '=');
     std::cout << line << "\n\n";
+
     timer.show();
 
     return output;
