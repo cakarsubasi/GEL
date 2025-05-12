@@ -50,11 +50,30 @@ bool test_oracle()
     return true;
 }
 
-TEST_CASE("deadlock")
+TEST_CASE("Destructor doesn't block")
 {
-    for (int i = 0; i < 10000; ++i) {
+    ThreadPool pool(2);
+}
+
+TEST_CASE("Inert waitAll")
+{
+    ThreadPool pool(2);
+    pool.waitAll();
+}
+
+TEST_CASE("deadlock_test1")
+{
+    for (int i = 0; i < 100000; ++i) {
         CHECK(test_empty());
+        //std::cout << "DT1  " << i << "\n";
+    }
+}
+
+TEST_CASE("deadlock_test2")
+{
+    for (int i = 0; i < 100000; ++i) {
         test_oracle();
+        //std::cout << "DT2 " << i << "\n";
     }
 }
 

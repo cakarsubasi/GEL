@@ -7,6 +7,7 @@
 
 #include <thread>
 #include <condition_variable>
+#include <semaphore>
 #include <functional>
 #include <queue>
 #include <vector>
@@ -19,7 +20,7 @@ namespace GEL::Util
 /// @brief a non-generic threadpool implementation
 class ThreadPool {
     std::mutex m_queue_mutex;
-    std::condition_variable m_queue_condition;
+    std::counting_semaphore<> m_queue_semaphore{0};
 
     std::atomic_int m_number_working = 0;
     std::condition_variable m_number_working_condition;
@@ -48,10 +49,9 @@ public:
                 while (!stop_token.stop_requested()) {
                     std::function<void()> task;
                     {
-                        std::unique_lock lock(m_queue_mutex);
-                        m_queue_condition.wait(lock, [&] {
-                            return !m_function_queue.empty() || stop_token.stop_requested();
-                        });
+                        while (m_function_queue.empty() && !stop_token.stop_requested())
+                            m_queue_semaphore.acquire();
+                        std::lock_guard lock(m_queue_mutex);
 
                         if (m_function_queue.empty()) {
                             continue;
@@ -61,6 +61,7 @@ public:
                     }
                     // TODO: exception handling to prevent a thread from going down
                     std::invoke(task);
+
                     {
                         // We need to handle the case when two workers finish around the same time. Without a guard,
                         // the main thread would miss the wakeup signal from the second thread, causing a potential
@@ -78,9 +79,6 @@ public:
     ~ThreadPool()
     {
         this->cancelAll();
-        for (auto& thread : m_threads) {
-            thread.join();
-        }
     }
 
     /// @brief number of threads
@@ -100,7 +98,7 @@ public:
             std::lock_guard lock(m_queue_mutex);
             m_function_queue.push(task);
         }
-        m_queue_condition.notify_one();
+        m_queue_semaphore.release();
     }
 
     /// @brief Waits until all threads have finished
@@ -112,19 +110,6 @@ public:
         });
     }
 
-    // void waitAllTimeout(const std::chrono::milliseconds& duration)
-    // {
-    //     std::unique_lock lock(m_waiting_mutex);
-    //     const auto success = m_number_working_condition.wait_for(lock, duration, [this]
-    //     {
-    //         return m_number_working.load() == 0;
-    //     });
-    //     if (!success)
-    //     {
-    //         throw std::runtime_error {"Timeout exceeded"};
-    //         cancelAll();
-    //     }
-    // }
 
     /// @brief Cancels every thread
     ///
@@ -134,13 +119,14 @@ public:
         for (auto& t : m_threads) {
             t.request_stop();
         }
-        m_queue_condition.notify_all();
+        m_queue_semaphore.release(this->size());
+        //m_queue_condition.notify_all();
     }
 };
 #else
 class ThreadPool {
     std::mutex m_queue_mutex;
-    std::condition_variable m_queue_condition;
+    std::counting_semaphore<> m_queue_semaphore{0};
 
     std::atomic_int m_number_working = 0;
     std::condition_variable m_number_working_condition;
@@ -167,10 +153,9 @@ public:
                 while (!m_should_stop.load()) {
                     std::function<void()> task;
                     {
-                        std::unique_lock lock(m_queue_mutex);
-                        m_queue_condition.wait(lock, [&] {
-                            return !m_function_queue.empty() || m_should_stop.load();
-                        });
+                        while (m_function_queue.empty() && !m_should_stop.load())
+                            m_queue_semaphore.acquire();
+                        std::lock_guard lock(m_queue_mutex);
 
                         if (m_function_queue.empty()) {
                             continue;
@@ -216,7 +201,7 @@ public:
             std::lock_guard lock(m_queue_mutex);
             m_function_queue.push(task);
         }
-        m_queue_condition.notify_one();
+        m_queue_semaphore.release();
     }
 
     void waitAll()
@@ -227,24 +212,10 @@ public:
         });
     }
 
-    // void waitAllTimeout(const std::chrono::milliseconds& duration)
-    // {
-    //     std::unique_lock lock(m_waiting_mutex);
-    //     const auto success = m_number_working_condition.wait_for(lock, duration, [this]
-    //     {
-    //         return m_number_working.load() == 0;
-    //     });
-    //     if (!success)
-    //     {
-    //         throw std::runtime_error{"Timeout exceeded"};
-    //         cancelAll();
-    //     }
-    // }
-
     void cancelAll()
     {
         m_should_stop.store(true);
-        m_queue_condition.notify_all();
+        m_queue_semaphore.release(this->size());
     }
 };
 
