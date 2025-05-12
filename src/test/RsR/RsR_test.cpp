@@ -68,7 +68,7 @@ auto test_new() -> HMesh::Manifold
     }
     normals = {};
     GEL::HMesh::RSR::RsROpts opts;
-    opts.isEuclidean = is_euclidean;
+    opts.is_euclidean = is_euclidean;
     opts.k = k;
     opts.genus = genus;
     opts.r = r;
