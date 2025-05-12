@@ -40,10 +40,10 @@ struct RsROpts {
     int32_t r = 20;
     int32_t theta = 60;
     int32_t n = 50;
-    bool isEuclidean = false;
+    bool is_euclidean = false;
 
     /// Are normals included with the input?
-    bool isGTNormal = true;
+    bool normals_included = true;
     bool isFaceNormal = true;
     bool isFaceLoop = true;
 };
@@ -71,9 +71,6 @@ struct Vertex {
         Neighbor(const Vertex& u, const Vertex& v, const uint id)
         {
             this->v = id;
-            //std::cout << v.coords << std::endl;
-            //std::cout << u.coords << std::endl;
-            //std::cout << cal_radians_3d(v.coords - u.coords, u.normal) << std::endl;
             this->angle = cal_radians_3d(v.coords - u.coords, u.normal);
         }
 
@@ -132,6 +129,7 @@ public:
     }
 };
 
+// TODO: make this thread safe
 class RSGraph : public AMGraph {
 public:
     double total_edge_length = 0.;

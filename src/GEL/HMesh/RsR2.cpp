@@ -2238,7 +2238,7 @@ auto estimate_normals_and_smooth(
     const auto kdTree = build_KDTree(org_vertices, indices);
     auto neighbors =
         calculate_neighbors(pool, org_vertices, kdTree, std::max(static_cast<int>(org_vertices.size() / 2000.), 192));
-    if (opts.isGTNormal) {
+    if (opts.normals_included) {
         normalize_normals(org_normals);
     } else {
         estimate_normal_no_normals_memoized(pool, org_vertices, neighbors, org_normals);
@@ -2247,14 +2247,14 @@ auto estimate_normals_and_smooth(
     std::cout << "Start first round smoothing ..." << std::endl;
     std::vector<Point> in_smoothed_v;
     in_smoothed_v.reserve(org_vertices.size());
-    if (!opts.isEuclidean)
+    if (!opts.is_euclidean)
         weighted_smooth(pool, org_vertices, org_normals, neighbors, in_smoothed_v);
     else
         // Note: this copies the entire vertices
         in_smoothed_v = org_vertices;
 
 
-    if (!opts.isGTNormal) {
+    if (!opts.normals_included) {
         const auto temp_tree1 = build_KDTree(in_smoothed_v, indices);
         neighbors =
         calculate_neighbors(pool, org_vertices, temp_tree1, std::max(static_cast<int>(org_vertices.size() / 2000.), 192), std::move(neighbors));
@@ -2262,7 +2262,7 @@ auto estimate_normals_and_smooth(
     }
 
     // Another round of smoothing
-    if (!opts.isEuclidean) {
+    if (!opts.is_euclidean) {
         std::cout << "Start second round smoothing ..." << std::endl;
 
         std::vector<Point> temp;
@@ -2271,7 +2271,7 @@ auto estimate_normals_and_smooth(
         in_smoothed_v.clear();
         weighted_smooth(pool, temp, org_normals, neighbors, in_smoothed_v);
 
-        if (!opts.isGTNormal) {
+        if (!opts.normals_included) {
             const Tree temp_tree2 = build_KDTree(in_smoothed_v, indices);
             calculate_neighbors(pool, org_vertices, temp_tree2, std::max(static_cast<int>(org_vertices.size() / 2000.), 192), std::move(neighbors));
             estimate_normal_no_normals_memoized(pool, in_smoothed_v, neighbors, org_normals);
@@ -2321,7 +2321,7 @@ auto split_components(
 
         std::cout << "correct normal orientation" << std::endl;
 
-        if (!opts.isGTNormal) {
+        if (!opts.normals_included) {
             correct_normal_orientation(kdTree, in_smoothed_v, org_normals, opts.k);
         }
 
@@ -2329,7 +2329,7 @@ auto split_components(
         // Identifies clusters of vertices which are reconstructed to disparate meshes
         find_components(org_vertices, component_vertices, in_smoothed_v,
                         component_smoothed_v, org_normals, component_normals, kdTree,
-                        opts.theta, opts.r, opts.k, opts.isEuclidean);
+                        opts.theta, opts.r, opts.k, opts.is_euclidean);
 
         in_smoothed_v.clear();
     }
@@ -2361,16 +2361,16 @@ auto component_to_manifold(
     std::vector<m_Edge_length> edge_length;
     std::vector<float> connection_max_length(vertices.size(), 0.);
     std::vector<float> pre_max_length(vertices.size(), 0.);
-    mst.isEuclidean = opts.isEuclidean;
+    mst.isEuclidean = opts.is_euclidean;
     mst.exp_genus = opts.genus;
     {
         SimpGraph g;
         init_graph(smoothed_v, smoothed_v, normals,
                    kdTree, g, connection_max_length,
-                   pre_max_length, opts.theta, opts.k, opts.isEuclidean);
+                   pre_max_length, opts.theta, opts.k, opts.is_euclidean);
 
         // Generate MST
-        build_mst(g, 0, mst, normals, smoothed_v, opts.isEuclidean);
+        build_mst(g, 0, mst, normals, smoothed_v, opts.is_euclidean);
 
         // Edge arrays and sort
         for (NodeID node : g.node_ids()) {
@@ -2379,7 +2379,7 @@ auto component_to_manifold(
                     Vec3 edge = smoothed_v[node] - smoothed_v[node_neighbor];
                     double len = edge.length();
 
-                    if (!opts.isEuclidean) {
+                    if (!opts.is_euclidean) {
                         len = cal_proj_dist(edge, normals[node], normals[node_neighbor]);
                     }
 
@@ -2432,9 +2432,9 @@ auto component_to_manifold(
     if (opts.genus != 0) {
         mst.isFinal = true;
         std::vector<NodeID> connected_handle_root;
-        connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.isEuclidean);
+        connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.is_euclidean);
         bool isFaceLoop = false;
-        triangulate(faces, mst, kdTree, isFaceLoop, opts.isEuclidean, connection_max_length, connected_handle_root);
+        triangulate(faces, mst, kdTree, isFaceLoop, opts.is_euclidean, connection_max_length, connected_handle_root);
     }
 
     ::HMesh::Manifold res;
@@ -2471,7 +2471,7 @@ auto point_cloud_to_mesh(
     auto normals_copy = normals;
     Util::ThreadPool pool(15);
     if (normals.empty()) {
-        opts2.isGTNormal = false;
+        opts2.normals_included = false;
     } else {
         assert(vertices.size() == normals.size());
     }
