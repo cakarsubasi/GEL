@@ -261,8 +261,8 @@ public:
     }
 };
 
-typedef Geometry::KDTree<Point, NodeID> Tree;
-typedef Geometry::KDTreeRecord<Point, NodeID> Record;
+using Tree = Geometry::KDTree<Point, NodeID>;
+using Record = Geometry::KDTreeRecord<Point, NodeID>;
 
 void NN_search(const Point&, const Tree&, double,
                std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
@@ -306,8 +306,8 @@ void minimum_spanning_tree(
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
-void correct_normal_orientation(const std::vector<Point>& in_smoothed_v,
-                                const Tree& kdTree, std::vector<Vec3>& normals, int k);
+void correct_normal_orientation(const Tree& kdTree,
+                                const std::vector<Point>& in_smoothed_v, std::vector<Vec3>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
                    Tree& KDTree, float edge_length);

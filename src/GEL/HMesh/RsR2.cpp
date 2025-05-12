@@ -39,6 +39,14 @@ inline bool neighbor_comparator(const m_neighbor_pair& l, const m_neighbor_pair&
     return l.first > r.first;
 }
 
+template <typename Heap>
+void heap_sort(Heap& heap)
+{
+    for (size_t i = heap.size(); i > 0; --i) {
+        std::pop_heap(heap.begin(), heap.begin() + i);
+    }
+}
+
 /**
     * @brief k nearest neighbor search
     *
@@ -54,7 +62,7 @@ inline bool neighbor_comparator(const m_neighbor_pair& l, const m_neighbor_pair&
 // TODO: We can cache search result for every point after smoothing
 // TODO: weighted smoothing version doesn't use distances
 template <typename DistType>
-void kNN_search(const Point& query, const Tree& kdTree,
+void knn_search(const Point& query, const Tree& kdTree,
                 int num, std::vector<NodeID>& neighbors,
                 std::vector<DistType>& neighbor_distance, const bool isContain)
 {
@@ -63,9 +71,7 @@ void kNN_search(const Point& query, const Tree& kdTree,
     std::vector<Record> records = kdTree.m_closest(num + 1, query, INFINITY);
 
     // Sort to the normal order from heap
-    for (auto i = records.size(); i > 0; --i) {
-        std::pop_heap(records.begin(), records.begin() + i);
-    }
+    heap_sort(records);
 
     int idx = 0;
     for (auto& record : records) {
@@ -79,12 +85,58 @@ void kNN_search(const Point& query, const Tree& kdTree,
     }
 }
 
-template <size_t k, typename DistType>
-void kNN_search_const(const Point& query, const Tree& kdTree, std::array<NodeID, k>& neighbors, std::array<DistType, k>& neighbor_distance, const bool isContain)
-{
+struct NeighborInfo {
+    NodeID id;
+    double distance;
+    NeighborInfo() = delete;
+    explicit NeighborInfo(const Record& record) noexcept : id(record.v), distance(std::sqrt(record.d))
+    {}
+};
 
+void knn_search(const Point& query, const Tree& kdTree,
+                int num, std::vector<NeighborInfo>& neighbors, const bool isContain)
+{
+    // TODO: this seems like such a pointless difference.
+    // It might be a better idea for the caller to handle this to reduce some clutter
+    // TODO: maybe make NeighborInfo ABI compatible with Record to directly move the records in, or alternatively
+    // TODO: change the implementation in KdTree to have an inout parameter
+    const std::vector<Record> records = [num, isContain, &kdTree, &query]() -> std::vector<Record> {
+        std::vector<Record> temp =
+            (!isContain) ?
+                kdTree.m_closest(num, query, INFINITY) :
+                kdTree.m_closest(num + 1, query, INFINITY);
+        heap_sort(temp);
+        return temp;
+    }();
+
+    int idx = 0;
+    for (auto record : records) {
+        [[unlikely]]
+        if (idx == 0 && isContain) {
+
+        } else {
+            neighbors.emplace_back(record);
+        }
+        idx++;
+    }
 }
 
+auto calculate_neighbors(Util::ThreadPool& pool, const std::vector<Point>& vertices, const Tree& kdTree, const int k)
+-> std::vector<std::vector<NeighborInfo>>
+{
+    std::vector<std::vector<NeighborInfo>> neighbors_memoized(vertices.size());
+    for (auto &neighbors : neighbors_memoized) {
+        neighbors.reserve(k);
+    }
+
+    auto cache_kNN_search = [kdTree, k](auto vertex, auto& neighbor) {
+        knn_search(vertex, kdTree, k, neighbor, true);
+    };
+    GEL::Util::parallel_foreach2(pool, cache_kNN_search, vertices, neighbors_memoized);
+    return neighbors_memoized;
+}
+
+/// TODO: consider more efficient ways of culling duplicate vertices
 void remove_duplicate_vertices(
     Util::ThreadPool& pool,
     std::vector<Point>& vertices,
@@ -96,18 +148,14 @@ void remove_duplicate_vertices(
     std::vector<Vec3> new_normals;
     const auto vertices_num = vertices.size();
 
-    auto lambda = [&kdTree, k](const size_t this_idx, Point vertex, Vec3 _normal)
-    -> std::optional<std::pair<Point, Vec3>> {
-        // TODO: creating two vectors per iteration is surely genius
-        std::vector<NodeID> neighbors;
-        std::vector<double> neighbor_distance;
-        // TODO: this creates one more vector internally
-        // TODO: might be a good idea to cache all search results and then map over the search results
-        kNN_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
+    std::vector<std::vector<NeighborInfo>> neighbors_memoized = calculate_neighbors(pool, vertices, kdTree, k);
 
-        for (auto i = 0; i < neighbors.size(); i++) {
-            const NodeID idx = neighbors[i];
-            const double length = neighbor_distance[i];
+    auto lambda = [&neighbors_memoized](const size_t this_idx, Point vertex, Vec3 _normal)
+    -> std::optional<std::pair<Point, Vec3>> {
+
+        for (const auto& neighbors = neighbors_memoized[this_idx]; const auto neighbor : neighbors) {
+            const NodeID idx = neighbor.id;
+            const double length = neighbor.distance;
 
             if (this_idx == idx)
                 continue;
@@ -326,7 +374,7 @@ double find_components(std::vector<Point>& vertices,
         std::vector<NodeID> neighbors;
         std::vector<double> neighbor_distance;
         last_dist += (vertex - last_v).length();
-        kNN_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
+        knn_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
         last_dist = neighbor_distance[neighbor_distance.size() - 1];
         last_v = vertex;
 
@@ -509,7 +557,7 @@ void init_graph(
         std::vector<NodeID> neighbors;
         std::vector<float> dists;
         last_distance += (vertex - last_v).length();
-        kNN_search(smoothed_v[i], kdTree, k, neighbors, dists, true);
+        knn_search(smoothed_v[i], kdTree, k, neighbors, dists, true);
         last_distance = dists[dists.size() - 1];
         last_v = vertex;
         pre_max_length[i] = dists[static_cast<size_t>(k * 2. / 3.)];
@@ -628,6 +676,7 @@ int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target, int thre
 /**
 * @brief weighted smoothing method using defined neighborhood with tangential distance weighted
 *
+* @param pool thread pool
 * @param vertices: vertices of the point cloud
 * @param smoothed_v: [OUT] vertices after smoothing
 * @param normals: normal of the point cloud
@@ -642,68 +691,6 @@ void weighted_smooth(
     const std::vector<Vec3>& normals,
     const Tree& kdTree)
 {
-    int idx = 0;
-    double last_dist = INFINITY;
-    Point last_v(0., 0., 0.);
-    // TODO: weighted_smooth repeats the neighbor search calculation for every point
-    // for (auto& vertex : vertices) {
-    //     std::vector<NodeID> neighbors;
-    //     std::vector<double> neighbor_dist;
-    //     Vec3 normal = normals[idx];
-    //
-    //     int neighbor_num = 192;
-    //     last_dist += (vertex - last_v).length();
-    //     kNN_search(vertex, kdTree, neighbor_num,
-    //                neighbors, neighbor_dist, true);
-    //     last_dist = neighbor_dist[neighbor_dist.size() - 1];
-    //     last_v = vertex;
-    //
-    //     double weight_sum = 0.;
-    //     double amp_sum = 0.;
-    //     double max_dist = 0.;
-    //     int added = 0;
-    //     std::vector<double> vertical_length;
-    //     std::vector<double> weights;
-    //     for (const auto& neighbor : neighbors) {
-    //         Point neighbor_pos = vertices[neighbor];
-    //         Vec3 n2this = neighbor_pos - vertex;
-    //         if (dot(normals[neighbor], normal) < std::cos(30. / 180. * M_PI)) {
-    //             continue;
-    //         }
-    //         double vertical = dot(n2this, normal);
-    //         double n_dist = (neighbor_pos - vertex).length();
-    //
-    //         double tangential_square = n_dist * n_dist -
-    //             vertical * vertical;
-    //         double tangential_dist = 0.;
-    //         if (tangential_square > 0.)
-    //             tangential_dist = std::sqrt(tangential_square);
-    //         if (!std::isfinite(tangential_dist)) {
-    //             std::cout << n_dist << " " << vertical << std::endl;
-    //             std::cout << "error" << std::endl;
-    //         }
-    //         const float weight = -tangential_dist;
-    //         if (tangential_dist > max_dist)
-    //             max_dist = tangential_dist;
-    //
-    //         weights.push_back(weight);
-    //         vertical_length.push_back(vertical);
-    //         added++;
-    //     }
-    //     for (int i = 0; i < vertical_length.size(); i++) {
-    //         amp_sum += vertical_length[i] * (weights[i] + max_dist);
-    //         weight_sum += weights[i] + max_dist;
-    //     }
-    //
-    //     if (weight_sum == 0.)
-    //         weight_sum = 1.;
-    //     amp_sum /= weight_sum;
-    //     if (!std::isfinite(amp_sum))
-    //         std::cout << "error" << std::endl;
-    //     Vec3 move = amp_sum * normal;
-    //     smoothed_v.push_back(vertex + move);
-    //     idx++;
-    // }
 
     auto lambda = [&normals, &kdTree, &vertices](const size_t idx, const Point& vertex) {
         struct Local {
@@ -718,7 +705,7 @@ void weighted_smooth(
         std::vector<double> neighbor_dist; neighbor_dist.reserve(neighbor_num);
         const Vec3 normal = normals[idx];
 
-        kNN_search(vertex, kdTree, neighbor_num,
+        knn_search(vertex, kdTree, neighbor_num,
                    neighbors, neighbor_dist, true);
 
         double weight_sum = 0.;
@@ -785,12 +772,14 @@ void estimate_normal_no_normals(
     std::vector<Vec3>& normals)
 {
     normals.clear();
+    // 192 is a magic number for smoothing
     const size_t neighbor_num = std::max(static_cast<int>(vertices.size() / 2000.), 192);
     // Data type transfer & Cal diagonal size
     auto lambda = [&](auto point) {
+        // need id, distance and coords anyway
         std::vector<NodeID> neighbors;
         std::vector<double> neighbor_dist;
-        kNN_search(point, kdTree, neighbor_num, neighbors, neighbor_dist, true);
+        knn_search(point, kdTree, neighbor_num, neighbors, neighbor_dist, true);
 
         std::vector<Point> neighbor_coords;
         for (const auto neighbor_id : neighbors) {
@@ -911,19 +900,19 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
 /**
     * @brief Determine the normal orientation
     *
-    * @param in_smoothed_v
     * @param kdTree
     * \@param G_angle graph whose edges have angle-based weight
+    * @param in_smoothed_v
     * @param normals: [OUT] normal of the point cloud with orientation corrected
     * @param k
     *
     * @return None
     */
 void correct_normal_orientation(
-    const std::vector<Point>& in_smoothed_v,
     const Tree& kdTree,
+    const std::vector<Point>& in_smoothed_v,
     std::vector<Vec3>& normals,
-    int k)
+    const int k)
 {
     SimpGraph g_angle;
     AMGraph::NodeSet sets;
@@ -945,7 +934,7 @@ void correct_normal_orientation(
         std::vector<NodeID> neighbors;
         std::vector<double> dists;
         last_dist += (vertex - last_v).length();
-        kNN_search(vertex, kdTree, k, neighbors, dists, false);
+        knn_search(vertex, kdTree, k, neighbors, dists, false);
         last_dist = dists[dists.size() - 1];
         last_v = vertex;
 
@@ -966,10 +955,10 @@ void correct_normal_orientation(
                 }
                 std::cout << "error" << std::endl;
             }
+            [[unlikely]]
             if (angle_weight < 0)
                 std::cout << "error" << std::endl;
             g_angle.connect_nodes(i, neighbors[j], angle_weight);
-            //g_angle.add_edge(i, neighbors[j], angle_weight);
         }
     }
 
@@ -1593,7 +1582,7 @@ void connect_handle(
         int validIdx = -1;
 
         last_dist += (smoothed_v[int(this_v)] - last_v).length();
-        kNN_search(smoothed_v[int(this_v)], KDTree, k, neighbors, dists, true);
+        knn_search(smoothed_v[int(this_v)], KDTree, k, neighbors, dists, true);
         last_dist = dists[dists.size() - 1];
         last_v = smoothed_v[int(this_v)];
 
@@ -2207,17 +2196,26 @@ void build_mst(
     }
 }
 
-[[nodiscard]]
-auto estimate_normals_and_smooth(std::vector<Point>& org_vertices, std::vector<Vec3>& org_normals,
-                                 const RsROpts& opts) -> std::vector<Point>
+template <typename Collection>
+auto indices_from(const Collection& collection) -> std::vector<NodeID>
 {
-    Util::ThreadPool pool(15);
-
-    const auto indices = [&] {
-        std::vector<NodeID> temp(org_vertices.size());
+    const auto indices = [&collection] {
+        std::vector<NodeID> temp(collection.size());
         std::iota(temp.begin(), temp.end(), 0);
         return temp;
     }();
+    return indices;
+}
+
+[[nodiscard]]
+auto estimate_normals_and_smooth(
+    Util::ThreadPool& pool,
+    std::vector<Point>& org_vertices,
+    std::vector<Vec3>& org_normals,
+    const std::vector<NodeID>& indices,
+    const RsROpts& opts) -> std::vector<Point>
+{
+    // TODO: reuse the vector for neighbors to reduce allocations
 
     // Insert the number_of_data_points into the tree
     const auto tree_before_remove = build_KDTree(org_vertices, indices);
@@ -2271,8 +2269,13 @@ struct Components {
 };
 
 [[nodiscard]]
-auto split_components(std::vector<Point>&& org_vertices, std::vector<Vec3>&& org_normals, const RsROpts& opts,
-                      std::vector<Point>&& in_smoothed_v)
+auto split_components(
+    Util::ThreadPool& pool,
+    std::vector<Point>&& org_vertices,
+    std::vector<Vec3>&& org_normals,
+    std::vector<Point>&& in_smoothed_v,
+    const std::vector<NodeID>& indices,
+    const RsROpts& opts)
     -> Components
 {
     std::vector<std::vector<Point>> component_vertices;
@@ -2280,10 +2283,7 @@ auto split_components(std::vector<Point>&& org_vertices, std::vector<Vec3>&& org
     std::vector<std::vector<Vec3>> component_normals;
     {
         // Build kdTree - CGAL
-        std::vector<NodeID> indices(in_smoothed_v.size());
-        std::iota(indices.begin(), indices.end(), 0);
-
-        // Insert number_of_data_points in the tree
+        // Insert the number_of_data_points in the tree
         const Tree kdTree = build_KDTree(in_smoothed_v, indices);
 
         // Correct orientation
@@ -2293,7 +2293,7 @@ auto split_components(std::vector<Point>&& org_vertices, std::vector<Vec3>&& org
         std::cout << "correct normal orientation" << std::endl;
 
         if (!opts.isGTNormal) {
-            correct_normal_orientation(in_smoothed_v, kdTree, org_normals, opts.k);
+            correct_normal_orientation(kdTree, in_smoothed_v, org_normals, opts.k);
         }
 
         std::cout << "find components" << std::endl;
@@ -2439,6 +2439,7 @@ auto point_cloud_to_mesh(
     ::HMesh::Manifold output;
     auto org_vertices = vertices;
     auto org_normals = normals;
+    Util::ThreadPool pool(15);
     if (normals.empty()) {
         opts2.isGTNormal = false;
     } else {
@@ -2455,7 +2456,9 @@ auto point_cloud_to_mesh(
 
     // Estimate normals & orientation & weighted smoothing
     timer.start("Estimate normals");
-    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(org_vertices, org_normals, opts2);
+    const auto indices = indices_from(org_vertices);
+
+    std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(pool, org_vertices, org_normals, indices, opts2);
     timer.end("Estimate normals");
 
 
@@ -2463,8 +2466,8 @@ auto point_cloud_to_mesh(
     timer.start("algorithm");
     auto [component_vertices,
         component_smoothed_v,
-        component_normals] = split_components(
-        std::move(org_vertices), std::move(org_normals), opts2, std::move(in_smoothed_v));
+        component_normals] = split_components(pool,
+        std::move(org_vertices), std::move(org_normals), std::move(in_smoothed_v), indices, opts2);
     // There is no guarantee that there is more than one component, and components can
     // be highly non-uniform in terms of how many primitives they have. That means we cannot
     // rely on this loop for good parallelization opportunities.
