@@ -16,18 +16,27 @@ namespace GEL::Util
 {
 /// Apple Clang does not support jthread without an additional argument
 /// We don't rely meaningfully on jthread, so a C+11 thread fallback is included
-#ifndef __APPLE__
+
 /// @brief a non-generic threadpool implementation
 class ThreadPool {
+#if defined(__APPLE__)
+    using thread_t = std::thread;
+#else
+    using thread_t = std::jthread;
+#endif
+
     std::mutex m_queue_mutex;
     std::counting_semaphore<> m_queue_semaphore{0};
 
     std::atomic_int m_number_working = 0;
-    std::condition_variable m_number_working_condition;
-    std::mutex m_waiting_mutex;
+    std::binary_semaphore m_number_working_condition{0};
 
     std::queue<std::function<void()>> m_function_queue;
-    std::vector<std::jthread> m_threads;
+    std::vector<thread_t> m_threads;
+
+#if defined(__APPLE__)
+    std::atomic_bool m_should_stop{false};
+#endif
 
 public:
     ThreadPool() = delete;
@@ -39,17 +48,29 @@ public:
     /// @brief Construct a threadpool with the given thread count
     ///
     /// @throws std::invalid_argument if thread_count is 0
-    explicit ThreadPool(const uint32_t thread_count) : m_threads{std::vector<std::jthread>(thread_count)}
+    explicit ThreadPool(const uint32_t thread_count) : m_threads{
+        std::vector<thread_t>(thread_count)}
     {
         if (thread_count == 0) {
             throw std::invalid_argument("thread_count must be greater than 0");
         }
         for (auto& thread : m_threads) {
-            thread = std::jthread([this](const std::stop_token& stop_token) {
+#if !defined(__APPLE__)
+            thread = thread_t([this](const std::stop_token& stop_token) {
                 while (!stop_token.stop_requested()) {
+#else
+            thread = thread_t([this]() {
+                while (!m_should_stop.load()) {
+#endif
                     std::function<void()> task;
                     {
-                        while (m_function_queue.empty() && !stop_token.stop_requested())
+                        while (m_function_queue.empty() &&
+#if !defined(__APPLE__)
+                            !stop_token.stop_requested()
+#else
+                            !m_should_stop.load()
+#endif
+                            )
                             m_queue_semaphore.acquire();
                         std::lock_guard lock(m_queue_mutex);
 
@@ -63,12 +84,10 @@ public:
                     std::invoke(task);
 
                     {
-                        // We need to handle the case when two workers finish around the same time. Without a guard,
-                        // the main thread would miss the wakeup signal from the second thread, causing a potential
-                        // deadlock.
-                        std::lock_guard lock(m_waiting_mutex);
+                        // Only one worker thread should wake up the main thread. Only one worker thread will observe
+                        // this atomic variable as 1.
                         if (m_number_working.fetch_sub(1) == 1) {
-                            m_number_working_condition.notify_one();
+                            m_number_working_condition.release();
                         }
                     }
                 }
@@ -79,6 +98,11 @@ public:
     ~ThreadPool()
     {
         this->cancelAll();
+        for (auto& thread : m_threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
     }
 
     /// @brief number of threads
@@ -104,10 +128,8 @@ public:
     /// @brief Waits until all threads have finished
     void waitAll()
     {
-        std::unique_lock lock(m_waiting_mutex);
-        m_number_working_condition.wait(lock, [this] {
-            return m_number_working.load() == 0;
-        });
+        while (m_number_working.load() != 0)
+            m_number_working_condition.acquire();
     }
 
 
@@ -116,110 +138,17 @@ public:
     /// After this function, no other tasks should be added
     void cancelAll()
     {
+#if !defined(__APPLE__)
         for (auto& t : m_threads) {
             t.request_stop();
         }
-        m_queue_semaphore.release(this->size());
-        //m_queue_condition.notify_all();
-    }
-};
 #else
-class ThreadPool {
-    std::mutex m_queue_mutex;
-    std::counting_semaphore<> m_queue_semaphore{0};
-
-    std::atomic_int m_number_working = 0;
-    std::condition_variable m_number_working_condition;
-    std::mutex m_waiting_mutex;
-
-    std::queue<std::function<void()>> m_function_queue;
-    std::vector<std::thread> m_threads;
-    std::atomic_bool m_should_stop{false};
-
-public:
-    ThreadPool() = delete;
-
-    ThreadPool(const ThreadPool&) = delete;
-    ThreadPool& operator=(const ThreadPool&) = delete;
-
-    explicit ThreadPool(const uint32_t thread_count) : m_threads{std::vector<std::thread>(thread_count)}
-    {
-        if (thread_count == 0) {
-            throw std::invalid_argument("thread_count must be greater than 0");
-        }
-
-        for (auto& thread : m_threads) {
-            thread = std::thread([this]() {
-                while (!m_should_stop.load()) {
-                    std::function<void()> task;
-                    {
-                        while (m_function_queue.empty() && !m_should_stop.load())
-                            m_queue_semaphore.acquire();
-                        std::lock_guard lock(m_queue_mutex);
-
-                        if (m_function_queue.empty()) {
-                            continue;
-                        }
-                        task = std::move(m_function_queue.front());
-                        m_function_queue.pop();
-                    }
-                    // TODO: exception handling to prevent a thread from going down
-                    std::invoke(task);
-                    {
-                        // We need to handle the case when two workers finish around the same time. Without a guard,
-                        // the main thread would miss the wakeup signal from the second thread, causing a potential
-                        // deadlock.
-                        std::lock_guard lock(m_waiting_mutex);
-                        if (m_number_working.fetch_sub(1) == 1) {
-                            m_number_working_condition.notify_one();
-                        }
-                    }
-                }
-            });
-        }
-    }
-
-    ~ThreadPool()
-    {
-        this->cancelAll();
-        for (auto& thread : m_threads) {
-            if (thread.joinable()) {
-                thread.join();
-            }
-        }
-    }
-
-    [[nodiscard]] size_t size() const
-    {
-        return m_threads.size();
-    }
-
-    void addTask(const std::function<void()>&& task)
-    {
-        m_number_working.fetch_add(1, std::memory_order_acquire);
-        {
-            std::lock_guard lock(m_queue_mutex);
-            m_function_queue.push(task);
-        }
-        m_queue_semaphore.release();
-    }
-
-    void waitAll()
-    {
-        std::unique_lock lock(m_waiting_mutex);
-        m_number_working_condition.wait(lock, [this] {
-            return m_number_working.load() == 0;
-        });
-    }
-
-    void cancelAll()
-    {
         m_should_stop.store(true);
-        m_queue_semaphore.release(this->size());
+#endif
+        m_queue_semaphore.release(static_cast<long>(this->size()));
     }
 };
 
-#endif // __APPLE__
 } // namespace GEL::Util
 
 #endif // GEL_UTIL_THREADPOOL_H
