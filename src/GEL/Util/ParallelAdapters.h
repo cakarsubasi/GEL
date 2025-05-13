@@ -12,6 +12,17 @@
 
 namespace GEL::Util
 {
+
+
+
+template
+<double load_factor, bool bounds_checking>
+class Parallel {
+    static auto map() -> void
+    {
+
+    }
+};
 /// Concepts for constraining the inputs of parallel adapters
 namespace Concepts
 {
@@ -936,10 +947,10 @@ auto parallel_enumerate_map2_filter2(
     const InputIt1& it1,
     const InputIt2& it2,
     OutputIt1&& out1 = std::vector<
-        typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+        typename std::invoke_result_t<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type>
         ::value_type::first_type>(),
     OutputIt2&& out2 = std::vector<
-        typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
+        typename std::invoke_result_t<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type>
         ::value_type::second_type>()
 )
     -> std::pair<decltype(std::forward<OutputIt1&&>(out1)), decltype(std::forward<OutputIt2&&>(out2))>
