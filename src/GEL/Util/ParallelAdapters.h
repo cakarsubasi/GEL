@@ -11,7 +11,7 @@
 #include <optional>
 #ifdef _MSC_VER
 #include <limits> // std::numeric_limits
-#include <vector> // std::size
+#include <array> // std::size
 #endif
 
 namespace GEL::Util
