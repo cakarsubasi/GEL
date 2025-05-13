@@ -9,20 +9,14 @@
 #include <GEL/Util/ThreadPool.h>
 
 #include <optional>
+#ifdef _MSC_VER
+#include <limits> // std::numeric_limits
+#include <vector> // std::size
+#endif
 
 namespace GEL::Util
 {
 
-
-
-template
-<double load_factor, bool bounds_checking>
-class Parallel {
-    static auto map() -> void
-    {
-
-    }
-};
 /// Concepts for constraining the inputs of parallel adapters
 namespace Concepts
 {
