@@ -48,6 +48,7 @@ struct RsROpts {
     bool isFaceLoop = true;
 };
 
+/// A trivial wrapper over bool to avoid the std::vector<bool> specialization
 struct Boolean {
     bool inner;
 };
@@ -335,9 +336,8 @@ void maintain_face_loop(RSGraph& g, NodeID source, NodeID target);
 const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const NodeID& branch);
 
 // Utils
-void showProgressBar(float progress);
 
-Vec3 projected_vector(const Vec3& input, const Vec3& normal);
+// Vec3 projected_vector(const Vec3& input, const Vec3& normal);
 
 void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& share_neighbor, RSGraph& g);
 

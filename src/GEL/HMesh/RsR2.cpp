@@ -47,6 +47,14 @@ void heap_sort(Heap& heap)
     }
 }
 
+template <typename T>
+T queue_pop_front(std::queue<T>& queue)
+{
+    T front = std::move(queue.front());
+    queue.pop();
+    return front;
+}
+
 /**
     * @brief k nearest neighbor search
     *
@@ -134,6 +142,11 @@ auto calculate_neighbors(
         for (auto &neighbors : neighbors_memoized) {
             neighbors.reserve(k);
         }
+    } else if (neighbors_memoized.at(0).capacity() < k) {;
+        // TODO: this seems to lose performance because calls to reserve block yet the allocator is multithreaded
+        // for (auto &neighbors : neighbors_memoized) {
+        //     neighbors.reserve(k);
+        // }
     }
 
     auto cache_kNN_search = [kdTree, k](auto vertex, auto& neighbor) {
@@ -363,6 +376,7 @@ double find_components(const std::vector<Point>& vertices,
     assert(vertices.size() == smoothed_v.size());
     assert(vertices.size() == normals.size());
     double avg_edge_length = 0;
+    // TODO: can't we cache this?
     AMGraph::NodeSet sets;
     SimpGraph components;
     for (int i = 0; i < vertices.size(); i++) {
@@ -370,15 +384,11 @@ double find_components(const std::vector<Point>& vertices,
     }
 
     NodeID this_idx = 0;
-    std::set<NodeID> dup_remove;
+    //std::set<NodeID> dup_remove;
     double last_dist = INFINITY;
     Point last_v(0., 0., 0.);
     // Construct graph
     for (auto& vertex : smoothed_v) {
-        if (dup_remove.contains(this_idx)) {
-            this_idx++;
-            continue;
-        }
 
         std::vector<NodeID> neighbors;
         std::vector<double> neighbor_distance;
@@ -417,12 +427,6 @@ double find_components(const std::vector<Point>& vertices,
             if (this_idx == idx)
                 continue;
 
-            // Remove duplicate vertices
-            if (length < 1e-8 && this_idx != idx) {
-                dup_remove.insert(idx);
-                //std::cout << "Duplicate vertex " << idx << " is removed" << std::endl;
-            }
-
             avg_edge_length += length;
 
             for (int j = 0; j < k; j++) {
@@ -433,35 +437,25 @@ double find_components(const std::vector<Point>& vertices,
         }
         this_idx++;
     }
-    std::cout << std::to_string(dup_remove.size()) << " duplicate vertices will be removed." << std::endl;
-    double thresh_r = avg_edge_length / static_cast<double>(components.no_edges()) * outlier_thresh;
 
-    // Remove Edge Longer than threshold
-    std::vector<NodeID> edge_rm_v_id1, edge_rm_v_id2;
+    const double thresh_r = avg_edge_length / static_cast<double>(components.no_edges()) * outlier_thresh;
+
+    // Remove Edges Longer than the threshold
+    std::vector<std::pair<NodeID, NodeID>> edge_rm_v;
     for (NodeID i = 0; i < components.no_nodes(); i++) {
         for (auto& edges = components.edges(i); const auto& pair : edges) {
             NodeID vertex1 = i;
             NodeID vertex2 = pair.first;
             double edge_length = (vertices[vertex1] - vertices[vertex2]).length();
-            if (dup_remove.contains(vertex1)) {
-                edge_rm_v_id1.push_back(vertex1);
-                edge_rm_v_id2.push_back(vertex2);
-                continue;
-            }
-            if (dup_remove.contains(vertex2)) {
-                edge_rm_v_id1.push_back(vertex1);
-                edge_rm_v_id2.push_back(vertex2);
-                continue;
-            }
+
             if (edge_length > thresh_r) {
-                edge_rm_v_id1.push_back(vertex1);
-                edge_rm_v_id2.push_back(vertex2);
+                edge_rm_v.emplace_back(vertex1, vertex2);
             }
         }
     }
 
-    for (int i = 0; i < edge_rm_v_id1.size(); i++) {
-        components.disconnect_nodes(edge_rm_v_id1[i], edge_rm_v_id2[i]);
+    for (auto& [fst, snd] : edge_rm_v) {
+        components.disconnect_nodes(fst, snd);
     }
 
     // Find Components
@@ -487,9 +481,9 @@ double find_components(const std::vector<Point>& vertices,
                 this_normals.push_back(normals[element]);
             }
 
-            component_normals.push_back(this_normals);
-            component_vertices.push_back(this_vertices);
-            component_smoothed_v.push_back(this_smoothed_v);
+            component_normals.emplace_back(std::move(this_normals));
+            component_vertices.emplace_back(std::move(this_vertices));
+            component_smoothed_v.emplace_back(std::move(this_smoothed_v));
         }
     }
 
@@ -933,84 +927,93 @@ void correct_normal_orientation(
     std::vector<Vec3>& normals,
     const int k)
 {
-    SimpGraph g_angle;
-    AMGraph::NodeSet sets;
-    //sets.reserve(in_smoothed_v.size());
+    /// TODO: we rely on graph traversal here to flip normals as needed
+    ///
+    const auto [g_angle, sets] = [&]{
+        SimpGraph g_angle_temp;
+        AMGraph::NodeSet sets_temp;
+        //sets.reserve(in_smoothed_v.size());
 
-    //RSGraph g_angle;
-    //g_angle.init(in_pc.vertices);
-    for (int i = 0; i < in_smoothed_v.size(); i++) {
-        sets.insert(g_angle.add_node());
-    }
-
-    // Init angle based graph
-    double last_dist = INFINITY;
-    Point last_v(0., 0., 0.);
-    for (int i = 0; i < in_smoothed_v.size(); i++) {
-        Point vertex = in_smoothed_v[i];
-        Vec3 this_normal = normals[i];
-
-        std::vector<NodeID> neighbors;
-        std::vector<double> dists;
-        last_dist += (vertex - last_v).length();
-        knn_search(vertex, kdTree, k, neighbors, dists, false);
-        last_dist = dists[dists.size() - 1];
-        last_v = vertex;
-
-        for (int j = 0; j < neighbors.size(); j++) {
-            if (g_angle.find_edge(i, neighbors[j]) != AMGraph::InvalidEdgeID)
-                continue;
-            Vec3 neighbor_normal = normals[neighbors[j]];
-
-            float angle_weight = cal_angle_based_weight(this_normal, neighbor_normal);
-            if (i == neighbors[j] && j != 0) {
-                std::cout << i << std::endl;
-                std::cout << j << std::endl;
-                int test = 0;
-                for (auto neighbor : neighbors) {
-                    std::cout << neighbor << std::endl;
-                    std::cout << dists[test] << std::endl;
-                    test++;
-                }
-                std::cout << "error" << std::endl;
-            }
-            [[unlikely]]
-            if (angle_weight < 0)
-                std::cout << "error" << std::endl;
-            g_angle.connect_nodes(i, neighbors[j], angle_weight);
+        //RSGraph g_angle;
+        //g_angle.init(in_pc.vertices);
+        for (int i = 0; i < in_smoothed_v.size(); i++) {
+            sets_temp.insert(g_angle_temp.add_node());
         }
-    }
 
-    std::vector<AMGraph::NodeSet> components_vec;
+        //auto all_neighbors = calculate_neighbors(pool, vertices, kdTree, k);
 
-    components_vec = connected_components(g_angle, sets);
+        // Init angle based graph
+        for (int i = 0; i < in_smoothed_v.size(); i++) {
+            const Point vertex = in_smoothed_v[i];
+            const Vec3 this_normal = normals[i];
 
-    for (const auto & i : components_vec) {
+            std::vector<NodeID> neighbors;
+            std::vector<double> dists;
+            knn_search(vertex, kdTree, k, neighbors, dists, false);
+
+            for (const auto neighbor : neighbors) {
+                if (g_angle_temp.find_edge(i, neighbor) != AMGraph::InvalidEdgeID)
+                    continue;
+                const Vec3 neighbor_normal = normals[neighbor];
+                const float angle_weight = cal_angle_based_weight(this_normal, neighbor_normal);
+                /*[[unlikely]]
+                if (i == neighbors[j] && j != 0) {
+                    std::cout << i << std::endl;
+                    std::cout << j << std::endl;
+                    int test = 0;
+                    for (auto neighbor : neighbors) {
+                        std::cout << neighbor << std::endl;
+                        std::cout << dists[test] << std::endl;
+                        test++;
+                    }
+                    std::cout << "error" << std::endl;
+                }
+                [[unlikely]]
+                if (angle_weight < 0)
+                    std::cout << "error" << std::endl;*/
+
+                /// TODO: This does not result in resizing and is unaliased if (source, neighbor) is disjoint
+                /// TODO: in other words, it is parallelizable. One of the internal variables must be made atomic
+                /// TODO: however
+                g_angle_temp.connect_nodes(i, neighbor, angle_weight);
+            }
+        }
+        return std::make_tuple(g_angle_temp, sets_temp);
+    }();
+
+
+    const std::vector<AMGraph::NodeSet> components_vec = connected_components(g_angle, sets);
+
+    // The number of components and their relative sizes is inconsistent, don't parallelize this
+    for (const auto& i : components_vec) {
         SimpGraph mst_angle;
         NodeID root = *i.begin();
         minimum_spanning_tree(g_angle, root, mst_angle);
 
-        std::vector<bool> visited_vertex(g_angle.no_nodes(), false);
+        auto visited_vertex = std::vector(g_angle.no_nodes(), Boolean{false});
 
+        // This uses the MST to visit every
         // Start from the root
-        std::queue<int> to_visit;
+        std::queue<NodeID> to_visit;
         to_visit.push(root);
         while (!to_visit.empty()) {
-            NodeID node_id = to_visit.front();
+            const NodeID node_id = to_visit.front();
             to_visit.pop();
-            visited_vertex[node_id] = true;
-            Vec3 this_normal = normals[node_id];
-            for (auto neighbours = mst_angle.neighbors(node_id); auto vd : neighbours) {
-                if (!visited_vertex[int(vd)]) {
-                    to_visit.push(int(vd));
-                    Vec3 neighbor_normal = normals[int(vd)];
-                    if (CGLA::dot(this_normal, neighbor_normal) < 0) {
-                        normals[int(vd)] = -normals[int(vd)];
+
+            visited_vertex[node_id].inner = true;
+            const Vec3 this_normal = normals[node_id];
+            for (auto neighbours = mst_angle.neighbors(node_id); NodeID vd : neighbours) {
+                if (!visited_vertex[vd].inner) {
+                    to_visit.push(vd);
+                    const Vec3 neighbor_normal = normals[vd];
+                    if (dot(this_normal, neighbor_normal) < 0) {
+                        normals[vd] = -normals[vd];
                     }
                 }
             }
         }
     }
+
 }
 
 /**
@@ -1072,29 +1075,6 @@ void init_face_loop_label(RSGraph& g)
 }
 
 /**
-    * @brief Progress bar indicating the reconstruction process
-    *
-    * @param progress: current progress
-    *
-    * @return None
-    */
-
-void showProgressBar(float progress)
-{
-    int barWidth = 70; // Width of the progress bar
-
-    std::cout << "[";
-    int pos = barWidth * progress;
-    for (int i = 0; i < barWidth; ++i) {
-        if (i < pos) std::cout << "=";
-        else if (i == pos) std::cout << ">";
-        else std::cout << " ";
-    }
-    std::cout << "] " << int(progress * 100.0) << " %\r"; // \r returns to the beginning of the line
-    std::cout.flush(); // Flush the output to show the progress
-}
-
-/**
     * @brief Project a vector to a plane
     *
     * @param input: Vector to be projected
@@ -1102,7 +1082,7 @@ void showProgressBar(float progress)
     *
     * @return projected Vector
     */
-Vec3 projected_vector(Vec3& input, Vec3& normal)
+constexpr Vec3 projected_vector(const Vec3& input, const Vec3& normal)
 {
     Vec3 normal_normed = normal;
     normal_normed.normalize();
@@ -1135,9 +1115,6 @@ bool isIntersecting(RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4)
     Vec3 n4 = mst.m_vertices[v4].normal;
     Point midpoint_34 = p3 + (p4 - p3) / 2.;
     Vec3 normal_34 = (n3 + n4) / 2.;
-
-    //if (v3 == 1626 && v4 == 426)
-    //    std::cout << "debug" << std::endl;
 
     // On the plane of edge 12
     {
@@ -1311,21 +1288,19 @@ bool geometry_check(RSGraph& mst, TEdge& candidate, Tree& kdTree)
 
 bool Vanilla_check(RSGraph& mst, TEdge& candidate, Tree& kdTree)
 {
-    NodeID neighbor = candidate.second;
-    NodeID this_v = candidate.first;
+    const NodeID neighbor = candidate.second;
+    const NodeID this_v = candidate.first;
     Vec3 this_normal = mst.m_vertices[this_v].normal;
     this_normal.normalize();
     Vec3 neighbor_normal = mst.m_vertices[neighbor].normal;
     neighbor_normal.normalize();
 
     // Topology check
-    if (true) {
-        auto this_v_tree = predecessor(mst, this_v, neighbor).tree_id;
-        auto neighbor_tree = predecessor(mst, neighbor, this_v).tree_id;
+    const auto this_v_tree = predecessor(mst, this_v, neighbor).tree_id;
+    const auto neighbor_tree = predecessor(mst, neighbor, this_v).tree_id;
 
-        if (!mst.etf.connected(this_v_tree, neighbor_tree)) {
-            return false;
-        }
+    if (!mst.etf.connected(this_v_tree, neighbor_tree)) {
+        return false;
     }
 
     return geometry_check(mst, candidate, kdTree);
@@ -1885,6 +1860,7 @@ bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branc
 }
 
 
+// TODO: validity of what?
 bool check_validity(RSGraph& G, std::pair<std::vector<NodeID>, float>& item,
                     const Tree& KDTree, bool isFaceloop, bool isFinalize)
 {
@@ -1930,6 +1906,7 @@ bool check_validity(RSGraph& G, std::pair<std::vector<NodeID>, float>& item,
     }
 
     // Check face overlap
+    // TODO: why is face overlap disabled
     /*if (check_face_overlap(G, item.first, KDTree, tr_dist))
         return false;*/
 
@@ -2400,34 +2377,23 @@ auto component_to_manifold(
 
 
     // Vanilla MST imp
-    if (true) {
-        // Edge connection
-        for (int i = 0; i < edge_length.size(); i++) {
-            if (i % 100000 == 0) {
-                //std::cout << "Step " << i << " / " << edge_length.size() << std::endl;
-                showProgressBar(i / static_cast<float>(edge_length.size()));
-            }
-            unsigned int edge_idx = edge_length[i].second;
-            TEdge this_edge = full_edges[edge_idx];
+    // Edge connection
+    // TODO: progress was tracked here
+    for (auto & i : edge_length) {
+        unsigned int edge_idx = i.second;
+        TEdge this_edge = full_edges[edge_idx];
 
-            //if ((this_edge.first == 997 && this_edge.second == 1626) ||
-            //    (this_edge.first == 1626 && this_edge.second == 733))
-            //    std::cout << mst.find_edge(733, 2114) << std::endl;
-            if (mst.find_edge(this_edge.first, this_edge.second) != AMGraph::InvalidEdgeID)
-                continue;
+        if (mst.find_edge(this_edge.first, this_edge.second) != AMGraph::InvalidEdgeID)
+            continue;
 
-            if (bool isValid = Vanilla_check(mst, this_edge, kdTree)) {
-                bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree,
-                                             edge_length[i].first);
-            }
+        // TODO: isAdded not checked?
+        if (bool isValid = Vanilla_check(mst, this_edge, kdTree)) {
+            bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree,
+                                         i.first);
         }
-        // TODO: does this do anything
-        showProgressBar(1.0);
-        std::cout << std::endl;
     }
-    //std::cout << mst.total_edge_length << std::endl;
+    std::cout << std::endl;
 
-    //std::vector<std::vector<NodeID>> mesh_before = faces;
     // Create handles & Triangulation
     if (opts.genus != 0) {
         mst.isFinal = true;
@@ -2454,6 +2420,7 @@ auto component_to_manifold(
         flattened_face.push_back(face[2]);
     }
 
+    // TODO: This takes a raw pointer which is probably unwanted
     ::HMesh::build(res, mst.no_nodes(), &pos[0], faces.size(),
                    &mesh_faces[0], &flattened_face[0]);
 
@@ -2503,7 +2470,6 @@ auto point_cloud_to_mesh(
     for (size_t component_id = 0; component_id < component_vertices.size(); component_id++) {
         std::cout << "Reconstructing component " + std::to_string(component_id) + " ...\n";
 
-        //std::vector<std::vector<NodeID>> faces;
         std::vector<Point> vertices_of_this = std::move(component_vertices[component_id]);
         std::vector<Vec3>  normals_of_this = std::move(component_normals[component_id]);
         std::vector<Point> smoothed_v_of_this = std::move(component_smoothed_v[component_id]);
