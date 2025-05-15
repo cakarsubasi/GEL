@@ -37,8 +37,8 @@ double cal_radians_3d(const Vec3& branch_vec, const Vec3& normal,
 struct RsROpts {
     int32_t genus = -1;
     int32_t k = 70;
-    int32_t r = 20;
-    int32_t theta = 60;
+    double r = 20;
+    double theta = 60;
     int32_t n = 50;
     bool is_euclidean = false;
 
@@ -57,17 +57,19 @@ struct Boolean {
 struct Vertex {
     NodeID id = 0;
     int normal_rep = -1;
-    bool colored = false;
     Vec3 coords = Vec3(0., 0., 0.);
     Vec3 normal = Vec3(0., 0., 0.);
     std::vector<Boolean> faceExist;
     float distance = 0.0f;
 
+    // Hash implementation?
     struct Neighbor {
         double angle;
         uint v;
-        mutable uint tree_id = 0;
-        mutable bool faceExist = false;
+        mutable
+        uint tree_id = 0;
+        mutable
+        bool faceExist = false;
 
         Neighbor(const Vertex& u, const Vertex& v, const uint id)
         {
@@ -97,7 +99,7 @@ struct Edge {
     double weight = 0.;
     // ?
     int ref_time = 0;
-    int count_weight = 1;
+    // int count_weight = 1;
 };
 
 typedef Vertex::Neighbor Neighbor;
@@ -134,11 +136,12 @@ public:
 class RSGraph : public AMGraph {
 public:
     double total_edge_length = 0.;
-    int face_loop_id = 0;
+    // int face_loop_id = 0;
     bool isEuclidean = false;
     bool isFinal = false;
     int exp_genus = -1;
     ETF etf;
+
     int current_no_edges = 0;
 
     Util::AttribVec<NodeID, Vertex> m_vertices;
@@ -182,12 +185,13 @@ public:
         const auto& u = m_vertices[root];
         const auto& v = m_vertices[neighbor];
         m_vertices[root].ordered_neighbors.insert(Neighbor(u, v, neighbor));
-        //std::cout << Neighbor(u, v, neighbor).angle << std::endl;
     }
 
     EdgeID add_edge(const NodeID source, const NodeID target, const float weight = 0.)
     {
         const EdgeID id = this->connect_nodes(source, target);
+        assert(id != InvalidEdgeID);
+        // TODO: eliminating this check results in a crash, figure out where the UB actually is
         if (id != InvalidEdgeID) {
             current_no_edges++;
             m_edges[id].weight = weight;
@@ -215,33 +219,33 @@ public:
         Vertex v;
         v.id = n;
         v.coords = p;
-        m_vertices[n] = v;
+        m_vertices[n] = std::move(v);
         return n;
     }
 
     NodeID add_node(const Vec3& p, const Vec3& in_normal)
     {
-        NodeID n = AMGraph::add_node();
+        const NodeID n = AMGraph::add_node();
         Vertex v;
         v.id = n;
         v.coords = p;
         v.normal = in_normal;
-        m_vertices[n] = v;
+        m_vertices[n] = std::move(v);
         return n;
     }
 
     void init(const std::vector<Point>& vertices, const std::vector<Vec3>& normals)
     {
-        for (int i = 0; i < vertices.size(); i++) {
-            NodeID id = this->add_node(vertices[i]);
+        for (size_t i = 0; i < vertices.size(); i++) {
+            const NodeID id = this->add_node(vertices[i]);
             m_vertices[id].normal = normals[i];
         }
     }
 
     void init(const std::vector<Point>& vertices)
     {
-        for (const auto& vertice : vertices) {
-            this->add_node(vertice);
+        for (const auto& vertex : vertices) {
+            this->add_node(vertex);
         }
     }
 
@@ -273,8 +277,8 @@ double find_components(const std::vector<Point>& vertices,
                        const std::vector<Vec3>& normals,
                        std::vector<std::vector<Vec3>>& component_normals,
                        const Tree& kdTree,
-                       float cross_conn_thresh,
-                       float outlier_thresh,
+                       double cross_conn_thresh,
+                       double outlier_thresh,
                        int k,
                        bool isEuclidean);
 
