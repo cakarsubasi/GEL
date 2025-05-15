@@ -16,7 +16,6 @@
 
 namespace GEL::Util
 {
-
 /// Concepts for constraining the inputs of parallel adapters
 namespace Concepts
 {
@@ -93,8 +92,8 @@ namespace ParallelUtil
         return lhs / rhs + (lhs % rhs != 0);
     }
 
-    /// @brief Wraps up
-    /// @return
+    /// @brief Wraps up outputs to a value or a reference pair depending on the value classification
+    /// @return either std::pair<T1&, T2&> or std::pair<T1, T2>
     template <typename T1, typename T2>
     auto make_pair_wrapper(T1&& t1, T2&& t2)
     {
@@ -110,11 +109,29 @@ namespace ParallelUtil
             );
         }
     }
+
+    /// @brief Moves chunks and resizes the output array for
+    /// @param target output array
+    /// @param counter the counter vector containing chunk sizes
+    /// @param max_chunk_size gap size between the chunks
+    /// @param total_size counter.sum()
+    void fix_chunks(auto& target, const auto& counter, auto max_chunk_size, auto total_size)
+    {
+        auto end_of_chunk1 = target.begin() + counter.at(0);
+        for (size_t chunk = 1; chunk < counter.size(); ++chunk) {
+            auto this_chunk_size = counter[chunk];
+            auto chunk_begin = target.begin() + chunk * max_chunk_size;
+            auto chunk_end = chunk_begin + this_chunk_size;
+            std::copy(chunk_begin, chunk_end, end_of_chunk1);
+            end_of_chunk1 += this_chunk_size;
+        }
+        target.resize(total_size);
+    }
 }
 
 using namespace Concepts;
 
-///
+/// @brief Runs the given closure for each element of the input iterator
 /// @tparam F a unary function type of the form T -> void
 /// @tparam InputIt An input iterator type that yields elements of T
 /// @tparam BoundsChecking Whether to perform bound checking in the iterators
@@ -124,7 +141,9 @@ using namespace Concepts;
 ///
 template <typename F,
           typename InputIt,
-          bool BoundsChecking = true>
+          bool BoundsChecking = true,
+          double LoadFactor = 1.0
+>
     requires
     ContiguousSizedCollection<InputIt> &&
     UnaryFunction<F, typename InputIt::value_type, void>
@@ -151,7 +170,7 @@ auto parallel_foreach(ThreadPool& pool, F&& f, const InputIt& it) -> void
     pool.waitAll();
 }
 
-///
+/// @brief Runs the given closure for each element of two input iterators
 /// @tparam F a binary function type of the form (T, U) -> void
 /// @tparam InputIt1 An input iterator type that yields elements of T
 /// @tparam InputIt2 An input iterator type that yields elements of U
@@ -488,16 +507,7 @@ auto parallel_filter(
     for (const auto& counter : counters) {
         total_size += counter;
     }
-
-    auto end_of_chunk = out.begin() + counters.at(0);
-    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
-        auto chunk_size = counters[chunk];
-        auto chunk_begin = out.begin() + chunk * reduced_size;
-        auto chunk_end = chunk_begin + chunk_size;
-        std::copy(chunk_begin, chunk_end, end_of_chunk);
-        end_of_chunk += chunk_size;
-    }
-    out.resize(total_size);
+    ParallelUtil::fix_chunks(out, counters, reduced_size, total_size);
 
     return std::forward<OutputIt>(out);
 }
@@ -575,16 +585,7 @@ auto parallel_map_filter(
     for (const auto& counter : counters) {
         total_size += counter;
     }
-
-    auto end_of_chunk = out.begin() + counters.at(0);
-    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
-        auto chunk_size = counters[chunk];
-        auto chunk_begin = out.begin() + chunk * reduced_size;
-        auto chunk_end = chunk_begin + chunk_size;
-        std::copy(chunk_begin, chunk_end, end_of_chunk);
-        end_of_chunk += chunk_size;
-    }
-    out.resize(total_size);
+    ParallelUtil::fix_chunks(out, counters, reduced_size, total_size);
 
     return std::forward<OutputIt>(out);
 }
@@ -664,16 +665,7 @@ auto parallel_enumerate_map_filter(
     for (const auto& counter : counters) {
         total_size += counter;
     }
-
-    auto end_of_chunk = out.begin() + counters.at(0);
-    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
-        auto chunk_size = counters[chunk];
-        auto chunk_begin = out.begin() + chunk * reduced_size;
-        auto chunk_end = chunk_begin + chunk_size;
-        std::copy(chunk_begin, chunk_end, end_of_chunk);
-        end_of_chunk += chunk_size;
-    }
-    out.resize(total_size);
+    ParallelUtil::fix_chunks(out, counters, reduced_size, total_size);
 
     return std::forward<OutputIt>(out);
 }
@@ -762,16 +754,7 @@ auto parallel_map2_filter(
     for (const auto& counter : counters) {
         total_size += counter;
     }
-
-    auto end_of_chunk = out.begin() + counters.at(0);
-    for (size_t chunk = 1; chunk < pool_size; ++chunk) {
-        auto chunk_size = counters[chunk];
-        auto chunk_begin = out.begin() + chunk * reduced_size;
-        auto chunk_end = chunk_begin + chunk_size;
-        std::copy(chunk_begin, chunk_end, end_of_chunk);
-        end_of_chunk += chunk_size;
-    }
-    out.resize(total_size);
+    ParallelUtil::fix_chunks(out, counters, reduced_size, total_size);
 
     return std::forward<OutputIt>(out);
 }
@@ -792,7 +775,6 @@ auto parallel_map2_filter(
 template <typename F,
           typename InputIt1,
           typename InputIt2,
-          // TODO: the default types for these seem to be causing some problems
           typename OutputIt1 =
           std::vector<
               typename std::invoke_result_t<F, typename InputIt1::value_type, typename InputIt2::value_type>
@@ -806,11 +788,10 @@ template <typename F,
     ContiguousSizedCollection<InputIt1> &&
     ContiguousSizedCollection<InputIt2> &&
     ContiguousSizedCollection<OutputIt1> &&
-    ContiguousSizedCollection<OutputIt2>
-// TODO: fix this
-// &&
-//     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type ,std::optional<
-//      std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename std::remove_reference_t<OutputIt2>::value_type>>>
+    ContiguousSizedCollection<OutputIt2> &&
+    BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type,
+                std::optional<std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename
+                                        std::remove_reference_t<OutputIt2>::value_type>>>
 auto parallel_map2_filter2(
     ThreadPool& pool,
     F&& f,
@@ -854,7 +835,7 @@ auto parallel_map2_filter2(
                 if constexpr (BoundsChecking) {
                     const auto& input_value1 = it1.at(j);
                     const auto& input_value2 = it2.at(j);
-                    const auto&& result = f(input_value1, input_value2);
+                    const auto result = f(input_value1, input_value2);
                     if (result.has_value()) {
                         auto [inner1, inner2] = result.value();
                         out1.at(begin + thread_counter) = std::move(inner1);
@@ -864,7 +845,7 @@ auto parallel_map2_filter2(
                 } else {
                     const auto& input_value1 = it1[j];
                     const auto& input_value2 = it2[j];
-                    const auto&& result = f(input_value1, input_value2);
+                    const auto result = f(input_value1, input_value2);
                     if (result.has_value()) {
                         auto [inner1, inner2] = result.value();
                         out1[begin + thread_counter] = std::move(inner1);
@@ -882,19 +863,8 @@ auto parallel_map2_filter2(
         total_size += counter;
     }
 
-    auto fix_chunks = [pool_size](auto& target, const auto& counter, auto max_chunk_size, auto total_size) {
-        auto end_of_chunk1 = target.begin() + counter.at(0);
-        for (size_t chunk = 1; chunk < pool_size; ++chunk) {
-            auto this_chunk_size = counter[chunk];
-            auto chunk_begin = target.begin() + chunk * max_chunk_size;
-            auto chunk_end = chunk_begin + this_chunk_size;
-            std::copy(chunk_begin, chunk_end, end_of_chunk1);
-            end_of_chunk1 += this_chunk_size;
-        }
-        target.resize(total_size);
-    };
-    fix_chunks(out1, counters, reduced_size, total_size);
-    fix_chunks(out2, counters, reduced_size, total_size);
+    ParallelUtil::fix_chunks(out1, counters, reduced_size, total_size);
+    ParallelUtil::fix_chunks(out2, counters, reduced_size, total_size);
 
     return std::make_pair(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
 }
@@ -916,7 +886,6 @@ auto parallel_map2_filter2(
 template <typename F,
           typename InputIt1,
           typename InputIt2,
-          // TODO: the default types for these seem to be causing some problems
           typename OutputIt1 =
           std::vector<
               typename std::invoke_result_t<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type>
@@ -930,11 +899,10 @@ template <typename F,
     ContiguousSizedCollection<InputIt1> &&
     ContiguousSizedCollection<InputIt2> &&
     ContiguousSizedCollection<OutputIt1> &&
-    ContiguousSizedCollection<OutputIt2>
-// TODO: fix this requirement
-// &&
-//     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type ,std::optional<
-//      std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename std::remove_reference_t<OutputIt2>::value_type>>>
+    ContiguousSizedCollection<OutputIt2> &&
+    TernaryFunction<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type,
+                    std::optional<std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename
+                                            std::remove_reference_t<OutputIt2>::value_type>>>
 auto parallel_enumerate_map2_filter2(
     ThreadPool& pool,
     F&& f,
@@ -1007,23 +975,11 @@ auto parallel_enumerate_map2_filter2(
         total_size += counter;
     }
 
-    auto fix_chunks = [pool_size](auto& target, const auto& counter, auto max_chunk_size, auto total_size) {
-        auto end_of_chunk1 = target.begin() + counter.at(0);
-        for (size_t chunk = 1; chunk < pool_size; ++chunk) {
-            auto this_chunk_size = counter[chunk];
-            auto chunk_begin = target.begin() + chunk * max_chunk_size;
-            auto chunk_end = chunk_begin + this_chunk_size;
-            std::copy(chunk_begin, chunk_end, end_of_chunk1);
-            end_of_chunk1 += this_chunk_size;
-        }
-        target.resize(total_size);
-    };
-    fix_chunks(out1, counters, reduced_size, total_size);
-    fix_chunks(out2, counters, reduced_size, total_size);
+    ParallelUtil::fix_chunks(out1, counters, reduced_size, total_size);
+    ParallelUtil::fix_chunks(out2, counters, reduced_size, total_size);
 
     return ParallelUtil::make_pair_wrapper(std::forward<OutputIt1>(out1), std::forward<OutputIt2>(out2));
 }
-
 } // namespace GEL::Util
 
 #endif //GEL_UTIL_PARALLELADAPTERS_H
