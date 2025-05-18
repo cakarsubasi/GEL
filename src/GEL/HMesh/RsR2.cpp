@@ -413,6 +413,31 @@ double cal_proj_dist(const Vec3& edge, const Vec3& this_normal, const Vec3& neig
     return projection_dist;
 }
 
+auto filter_out_cross_connection(
+    const std::vector<Vec3d>& normals,
+    const NodeID this_idx,
+    std::vector<NodeID>& neighbors,
+    const double cross_conn_thresh,
+    const bool isEuclidean
+    )
+{
+    std::vector<NodeID> temp;
+    const Vec3 this_normal = normals[this_idx];
+    for (auto idx : neighbors) {
+        Vec3 neighbor_normal = normals[idx];
+        const double cos_theta = dot(this_normal, neighbor_normal) /
+            this_normal.length() / neighbor_normal.length();
+        const double cos_thresh =
+            (isEuclidean) ? 0.0 :
+            cos(cross_conn_thresh / 180. * M_PI);
+        if (cos_theta >= cos_thresh) {
+            temp.push_back(idx);
+        }
+    }
+    neighbors = std::move(temp);
+}
+
+
 /**
     * @brief initialize the graph and related information
     *
@@ -456,29 +481,8 @@ void init_graph(
         knn_search(smoothed_v[i], kdTree, k, neighbors, dists, true);
         pre_max_length[i] = dists[static_cast<size_t>(k * 2. / 3.)];
 
-        // Filter out the cross connection
-        {
-            // TODO: we can probably do this in place without using temp at all
-            std::vector<NodeID> temp;
-            for (const auto idx : neighbors) {
-                Vec3 neighbor_normal = normals[idx];
-                const double cos_theta = dot(this_normal, neighbor_normal) /
-                    this_normal.length() /
-                    neighbor_normal.length();
-                double cos_thresh = std::cos(cross_conn_thresh / 180. * M_PI);
-                if (isEuclidean)
-                    cos_thresh = 0.;
-                if (cos_theta >= cos_thresh) {
-                    temp.push_back(idx);
-                }
-            }
-            if (temp.empty())
-                std::cerr << "Bad normal input" << std::endl;
-            else {
-                neighbors.clear();
-                neighbors = std::move(temp);
-            }
-        }
+        // Filter out the cross-connection
+        filter_out_cross_connection(normals, i, neighbors, cross_conn_thresh, isEuclidean);
 
         // TODO: once again, connect_nodes can be run in parallel with one protected variable
         for (const unsigned long idx : neighbors) {
@@ -2104,24 +2108,23 @@ struct Components {
 /**
     * @brief Find the number of connected components and separate them
     *
-    * @param org_vertices: vertices of the point cloud
-    * @param in_smoothed_v: smoothed vertices of the point cloud
-    * @param org_normals: normal of the point cloud vertices
-    * @param kdTree: kd-tree for neighbor query
-    * @param cross_conn_thresh: angle threshold to avoid connecting vertices on different surface
-    * @param outlier_thresh: threshold to remove outlier
-    * @param k
-    * @param isEuclidean
-    *
+    * @param vertices: vertices of the point cloud
+    * @param smoothed_v: smoothed vertices of the point cloud
+    * @param normals: normal of the point cloud vertices
+    * @param kdTree: kd-tree for the neighbor query
+    * @param opts: theta: (cross-connection threshold) angle threshold to avoid connecting vertices on different surface
+    *              r: (outlier_thresh) threshold distance(?) to remove an outlier
+    *              k
+    *              isEuclidean
     * @return None
     */
 [[nodiscard]]
 auto split_components(
     Util::ThreadPool& pool,
     const Tree& kdTree,
-    std::vector<Point>&& org_vertices,
-    std::vector<Vec3>&& org_normals,
-    std::vector<Point>&& in_smoothed_v,
+    std::vector<Point>&& vertices,
+    std::vector<Vec3>&& normals,
+    std::vector<Point>&& smoothed_v,
     const RsROpts& opts)
     -> Components
 {
@@ -2132,13 +2135,10 @@ auto split_components(
     std::vector<std::vector<Vec3>> component_normals;
 
     // Identifies clusters of vertices which are reconstructed to disparate meshes
-    const std::vector<Point>& vertices = org_vertices;
-    const std::vector<Point>& smoothed_v = in_smoothed_v;
-    const std::vector<Vec3>& normals = org_normals;
-    double cross_conn_thresh = opts.theta;
-    double outlier_thresh = opts.r;
-    int k = opts.k;
-    bool isEuclidean = opts.is_euclidean;
+    const double cross_conn_thresh = opts.theta;
+    const double outlier_thresh = opts.r;
+    const int k = opts.k;
+    const bool isEuclidean = opts.is_euclidean;
     assert(vertices.size() == smoothed_v.size());
     assert(vertices.size() == normals.size());
     double avg_edge_length = 0;
@@ -2156,23 +2156,7 @@ auto split_components(
         std::vector<double> neighbor_distance;
         knn_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
 
-        // Filter out cross connection
-        {
-            std::vector<NodeID> temp;
-            Vec3 this_normal = normals[this_idx];
-            for (auto idx : neighbors) {
-                Vec3 neighbor_normal = normals[idx];
-                double cos_theta = dot(this_normal, neighbor_normal) /
-                    this_normal.length() / neighbor_normal.length();
-                double cos_thresh = cos(cross_conn_thresh / 180. * M_PI);
-                if (isEuclidean)
-                    cos_thresh = 0.;
-                if (cos_theta >= cos_thresh) {
-                    temp.push_back(idx);
-                }
-            }
-            neighbors = std::move(temp);
-        }
+        filter_out_cross_connection(normals, this_idx, neighbors, cross_conn_thresh, isEuclidean);
 
         for (int i = 0; i < neighbors.size(); i++) {
             NodeID idx = neighbors[i];
