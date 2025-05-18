@@ -210,6 +210,46 @@ auto parallel_foreach2(ThreadPool& pool, F&& f, InputIt1& it1, InputIt2& it2) ->
     pool.waitAll();
 }
 
+/// @brief Runs the given closure for each element of two input iterators
+/// @tparam F a binary function type of the form (T, U) -> void
+/// @tparam InputIt1 An input iterator type that yields elements of T
+/// @tparam InputIt2 An input iterator type that yields elements of U
+/// @tparam BoundsChecking Whether to perform bound checking in the iterators
+/// @param pool The threadpool to use
+/// @param f the function to map over
+/// @param it1 the first input iterator
+/// @param it2 the second input iterator
+template <typename F,
+          typename InputIt1,
+          typename InputIt2,
+          bool BoundsChecking = true>
+    requires
+    ContiguousSizedCollection<InputIt1> &&
+    ContiguousSizedCollection<InputIt2> &&
+    TernaryFunction<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type, void>
+auto parallel_enumerate_foreach2(ThreadPool& pool, F&& f, InputIt1& it1, InputIt2& it2) -> void
+{
+    const auto pool_size = pool.size();
+    const auto work_size = ParallelUtil::smallest_size(it1, it2);
+    const auto reduced_size = ParallelUtil::div_ceil(work_size, pool_size);
+    if (work_size == 0) {
+        return;
+    }
+    for (size_t i = 0; i < pool_size; ++i) {
+        pool.addTask([i, reduced_size, work_size, &it1, &it2, &f] {
+            const auto max_size = std::min((i + 1) * reduced_size, work_size);
+            for (auto j = i * reduced_size; j < max_size; ++j) {
+                if constexpr (BoundsChecking) {
+                    f(j, it1.at(j), it2.at(j));
+                } else {
+                    f(j, it1[j], it2[j]);
+                }
+            }
+        });
+    }
+    pool.waitAll();
+}
+
 /// @brief Map over an iterator.
 /// @tparam F a unary function type of the form T -> U
 /// @tparam InputIt An input iterator type that yields elements of T
