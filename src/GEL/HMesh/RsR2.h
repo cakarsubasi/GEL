@@ -270,18 +270,6 @@ using Record = Geometry::KDTreeRecord<Point, NodeID>;
 void NN_search(const Point&, const Tree&, double,
                std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
 
-double find_components(const std::vector<Point>& vertices,
-                       std::vector<std::vector<Point>>& component_vertices,
-                       const std::vector<Point>& smoothed_v,
-                       std::vector<std::vector<Point>>& component_smoothed_v,
-                       const std::vector<Vec3>& normals,
-                       std::vector<std::vector<Vec3>>& component_normals,
-                       const Tree& kdTree,
-                       double cross_conn_thresh,
-                       double outlier_thresh,
-                       int k,
-                       bool isEuclidean);
-
 void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& smoothed_v,
                 const std::vector<Vec3>& normals, const Tree& kdTree, SimpGraph& dist_graph,
                 std::vector<float>& max_length, std::vector<float>& pre_max_length, float cross_conn_thresh, int k,
@@ -290,13 +278,6 @@ void init_graph(const std::vector<Point>& vertices, const std::vector<Point>& sm
 int find_shortest_path(const RSGraph& mst, NodeID start, NodeID target,
                        int threshold, std::vector<NodeID>& path);
 
-// void weighted_smooth(const std::vector<Point>& vertices,
-//                      std::vector<Point>& smoothed_v, const std::vector<Vec3>& normals,
-//                      const Tree& kdTree);
-
-// void estimate_normal(const std::vector<Point>& vertices,
-//                      const Tree& kdTree, std::vector<Vec3>& normals,
-//                      std::vector<NodeID>& zero_normal_id, bool isGTNormal);
 
 void minimum_spanning_tree(
     const SimpGraph& g,
@@ -308,9 +289,6 @@ void minimum_spanning_tree(
 );
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
-
-void correct_normal_orientation(const Tree& kdTree,
-                                const std::vector<Point>& in_smoothed_v, std::vector<Vec3>& normals, int k);
 
 bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
                    Tree& KDTree, float edge_length);
@@ -340,8 +318,6 @@ void maintain_face_loop(RSGraph& g, NodeID source, NodeID target);
 const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const NodeID& branch);
 
 // Utils
-
-// Vec3 projected_vector(const Vec3& input, const Vec3& normal);
 
 void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& share_neighbor, RSGraph& g);
 

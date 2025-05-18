@@ -62,12 +62,18 @@ void heap_sort(Heap& heap)
     }
 }
 
-template <typename T>
-T queue_pop_front(std::queue<T>& queue)
+template <typename Q>
+constexpr typename Q::value_type queue_pop_front(Q& queue)
 {
-    T front = std::move(queue.front());
-    queue.pop();
-    return front;
+    if constexpr (std::is_same_v<Q, std::priority_queue<typename Q::value_type>>) {
+        typename Q::value_type front = std::move(queue.top());
+        queue.pop();
+        return front;
+    } else {
+        typename Q::value_type front = std::move(queue.front());
+        queue.pop();
+        return front;
+    }
 }
 
 /// Erases an element and moves the last element in the vector in its place
@@ -80,6 +86,26 @@ T erase_swap(std::vector<T>& vec, typename std::vector<T>::size_type idx)
     T current = std::move(vec[idx]);
     vec[idx] = std::move(back);
     return current;
+}
+
+template <typename Float>
+Float safe_div(Float lhs, Float rhs)
+{
+    if (rhs == 0) {
+        return static_cast<Float>(0);
+    } else {
+        return lhs / rhs;
+    }
+}
+
+template <typename Float>
+Vec3 safe_div(Vec3 lhs, Float rhs)
+{
+    if (rhs == 0) {
+        return Vec3(0);
+    } else {
+        return lhs / rhs;
+    }
 }
 
 /**
@@ -313,6 +339,7 @@ double cal_radians_3d(const Vec3& branch_vec, const Vec3& normal, const Vec3& re
 Tree build_KDTree(const std::vector<Point>& vertices, const std::vector<NodeID>& indices)
 {
     Tree kdTree;
+    kdTree.reserve(vertices.size());
     // safety precondition
     assert(indices.size() >= vertices.size());
     int idx = 0;
@@ -361,152 +388,6 @@ void NN_search(const Point& query, const Tree& kdTree,
         neighbor_dist[0] = paired[0].first;
         neighbors[0] = paired[0].second;
     }
-}
-
-
-/**
-    * @brief Find the number of connected components and separate them
-    *
-    * @param vertices: vertices of the point cloud
-    * @param component_vertices: [OUT] point cloud vertices in different connected components
-    * @param smoothed_v: smoothed vertices of the point cloud
-    * @param component_smoothed_v: [OUT] smoothed point cloud vertices in different connected components
-    * @param normals: normal of the point cloud vertices
-    * @param component_normals: [OUT] normal of the point cloud vertices in different components
-    * @param kdTree: kd-tree for neighbor query
-    * @param cross_conn_thresh: angle threshold to avoid connecting vertices on different surface
-    * @param outlier_thresh: threshold to remove outlier
-    * @param k
-    * @param isEuclidean
-    *
-    *
-    * @return None
-    */
-double find_components(const std::vector<Point>& vertices,
-                       std::vector<std::vector<Point>>& component_vertices,
-                       const std::vector<Point>& smoothed_v,
-                       std::vector<std::vector<Point>>& component_smoothed_v,
-                       const std::vector<Vec3>& normals,
-                       std::vector<std::vector<Vec3>>& component_normals,
-                       const Tree& kdTree,
-                       double cross_conn_thresh,
-                       double outlier_thresh,
-                       int k,
-                       bool isEuclidean)
-{
-    assert(vertices.size() == smoothed_v.size());
-    assert(vertices.size() == normals.size());
-    double avg_edge_length = 0;
-
-    // TODO: can't we cache this?
-    AMGraph::NodeSet sets;
-    SimpGraph components;
-    for (int i = 0; i < vertices.size(); i++) {
-        sets.insert(components.add_node());
-    }
-
-    NodeID this_idx = 0;
-    // Construct graph
-    for (auto& vertex : smoothed_v) {
-
-        std::vector<NodeID> neighbors;
-        std::vector<double> neighbor_distance;
-        knn_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
-
-        // Filter out cross connection
-        {
-            std::vector<NodeID> temp;
-            Vec3 this_normal = normals[this_idx];
-            for (auto idx : neighbors) {
-                Vec3 neighbor_normal = normals[idx];
-                double cos_theta = dot(this_normal, neighbor_normal) /
-                    this_normal.length() / neighbor_normal.length();
-                double cos_thresh = std::cos(cross_conn_thresh / 180. * M_PI);
-                if (isEuclidean)
-                    cos_thresh = 0.;
-                if (cos_theta >= cos_thresh) {
-                    temp.push_back(idx);
-                }
-            }
-            if (temp.empty()) {
-                neighbors.clear();
-            } else {
-                neighbors.clear();
-                neighbors = temp;
-            }
-        }
-
-        for (int i = 0; i < neighbors.size(); i++) {
-            NodeID idx = neighbors[i];
-            double length = neighbor_distance[i];
-
-            if (this_idx == idx)
-                continue;
-
-            avg_edge_length += length;
-
-            for (int j = 0; j < k; j++) {
-                if (components.find_edge(this_idx, idx) != AMGraph::InvalidEdgeID)
-                    continue;
-                components.connect_nodes(this_idx, idx);
-            }
-        }
-        this_idx++;
-    }
-
-    const double thresh_r = avg_edge_length / static_cast<double>(components.no_edges()) * outlier_thresh;
-
-    // Remove Edges Longer than the threshold
-    std::vector<std::pair<NodeID, NodeID>> edge_rm_v;
-    for (NodeID i = 0; i < components.no_nodes(); i++) {
-        for (auto& edges = components.edges(i); const auto& pair : edges) {
-            NodeID vertex1 = i;
-            NodeID vertex2 = pair.first;
-            double edge_length = (vertices[vertex1] - vertices[vertex2]).length();
-
-            if (edge_length > thresh_r) {
-                edge_rm_v.emplace_back(vertex1, vertex2);
-            }
-        }
-    }
-
-    for (auto& [fst, snd] : edge_rm_v) {
-        components.disconnect_nodes(fst, snd);
-    }
-
-    // Find Components
-    std::vector<AMGraph::NodeSet> components_vec;
-
-    components_vec = connected_components(components, sets);
-
-    const auto num = components_vec.size();
-    std::cout << "The input contains " << num << " connected components." << std::endl;
-
-    // Valid Components and create new vectors for components
-    int valid_num = 0;
-    auto threshold = std::min<size_t>(vertices.size(), 100);
-    for (auto& component : components_vec) {
-        if (component.size() >= threshold) {
-            valid_num++;
-            std::vector<Vec3> this_normals;
-            std::vector<Point> this_vertices;
-            std::vector<Point> this_smoothed_v;
-            for (const auto& element : component) {
-                this_vertices.push_back(vertices[element]);
-                this_smoothed_v.push_back(smoothed_v[element]);
-                this_normals.push_back(normals[element]);
-            }
-
-            component_normals.emplace_back(std::move(this_normals));
-            component_vertices.emplace_back(std::move(this_vertices));
-            component_smoothed_v.emplace_back(std::move(this_smoothed_v));
-        }
-    }
-
-    std::cout << std::to_string(valid_num) << " of them will be reconstructed." << std::endl;
-
-    components.clear();
-    return thresh_r;
 }
 
 /**
@@ -833,24 +714,24 @@ void minimum_spanning_tree(
 
     AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
 
-    std::priority_queue<QElem> Q;
+    std::priority_queue<QElem> queue;
     for (auto n : g.neighbors(root)) {
-        auto d = CGLA::sqr_length(vertices[n] - vertices[root]);
-        Q.emplace(-d, root, n);
+        const auto d = CGLA::sqr_length(vertices[n] - vertices[root]);
+        queue.emplace(-d, root, n);
     }
 
-    while (!Q.empty()) {
-        auto [d, n, m] = Q.top();
-        Q.pop();
+    while (!queue.empty()) {
+        auto [d, n, m] = queue_pop_front(queue);
 
         if (!in_tree[m]) {
             in_tree[m] = true;
 
             Vec3 edge = gn.m_vertices[m].coords - gn.m_vertices[n].coords;
-            const float Euclidean_dist = edge.length();
-            const float projection_dist = cal_proj_dist(edge, gn.m_vertices[m].normal, gn.m_vertices[n].normal);
+            const double Euclidean_dist = edge.length();
+            const double projection_dist = cal_proj_dist(edge, gn.m_vertices[m].normal, gn.m_vertices[n].normal);
+            [[unlikely]]
             if (std::isnan(projection_dist) || std::isnan(Euclidean_dist))
-                std::cout << "debug" << std::endl;
+                std::cerr << "debug" << std::endl;
 
             if (isEuclidean)
                 gn.add_edge(m, n, Euclidean_dist);
@@ -859,8 +740,8 @@ void minimum_spanning_tree(
 
             //gn.connect_nodes(n, m);
             for (auto nn : g.neighbors(m)) {
-                auto d_nn_m = CGLA::sqr_length(vertices[nn] - vertices[m]);
-                Q.emplace(-d_nn_m, m, nn);
+                const auto d_nn_m = CGLA::sqr_length(vertices[nn] - vertices[m]);
+                queue.emplace(-d_nn_m, m, nn);
             }
         }
     }
@@ -912,6 +793,7 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     * @return None
     */
 void correct_normal_orientation(
+    Util::ThreadPool& pool,
     const Tree& kdTree,
     const std::vector<Point>& in_smoothed_v,
     std::vector<Vec3>& normals,
@@ -924,8 +806,6 @@ void correct_normal_orientation(
         AMGraph::NodeSet sets_temp;
         //sets.reserve(in_smoothed_v.size());
 
-        //RSGraph g_angle;
-        //g_angle.init(in_pc.vertices);
         for (int i = 0; i < in_smoothed_v.size(); i++) {
             sets_temp.insert(g_angle_temp.add_node());
         }
@@ -946,28 +826,11 @@ void correct_normal_orientation(
                     continue;
                 const Vec3 neighbor_normal = normals[neighbor];
                 const float angle_weight = cal_angle_based_weight(this_normal, neighbor_normal);
-                /*[[unlikely]]
-                if (i == neighbors[j] && j != 0) {
-                    std::cout << i << std::endl;
-                    std::cout << j << std::endl;
-                    int test = 0;
-                    for (auto neighbor : neighbors) {
-                        std::cout << neighbor << std::endl;
-                        std::cout << dists[test] << std::endl;
-                        test++;
-                    }
-                    std::cout << "error" << std::endl;
-                }
-                [[unlikely]]
-                if (angle_weight < 0)
-                    std::cout << "error" << std::endl;*/
 
-                /// TODO: This does not result in resizing and is unaliased if (source, neighbor) is disjoint
-                /// TODO: in other words, it is parallelizable. One of the internal variables must be made atomic
-                /// TODO: however
                 g_angle_temp.connect_nodes(i, neighbor, angle_weight);
             }
         }
+
         return std::make_tuple(g_angle_temp, sets_temp);
     }();
 
@@ -982,7 +845,7 @@ void correct_normal_orientation(
 
         auto visited_vertex = std::vector(g_angle.no_nodes(), Boolean{false});
 
-        // This uses the MST to visit every
+        // This uses the MST to visit every node
         // Start from the root
         std::queue<NodeID> to_visit;
         to_visit.push(root);
@@ -2238,13 +2101,27 @@ struct Components {
     Components(Components& other) = delete;
 };
 
+/**
+    * @brief Find the number of connected components and separate them
+    *
+    * @param org_vertices: vertices of the point cloud
+    * @param in_smoothed_v: smoothed vertices of the point cloud
+    * @param org_normals: normal of the point cloud vertices
+    * @param kdTree: kd-tree for neighbor query
+    * @param cross_conn_thresh: angle threshold to avoid connecting vertices on different surface
+    * @param outlier_thresh: threshold to remove outlier
+    * @param k
+    * @param isEuclidean
+    *
+    * @return None
+    */
 [[nodiscard]]
 auto split_components(
     Util::ThreadPool& pool,
+    const Tree& kdTree,
     std::vector<Point>&& org_vertices,
     std::vector<Vec3>&& org_normals,
     std::vector<Point>&& in_smoothed_v,
-    const std::vector<NodeID>& indices,
     const RsROpts& opts)
     -> Components
 {
@@ -2254,21 +2131,111 @@ auto split_components(
     std::vector<std::vector<Point>> component_smoothed_v;
     std::vector<std::vector<Vec3>> component_normals;
 
-    std::cout << "correct normal orientation" << std::endl;
-
-    const Tree kdTree = build_KDTree(in_smoothed_v, indices);
-    if (!opts.normals_included) {
-        correct_normal_orientation(kdTree, in_smoothed_v, org_normals, opts.k);
-    }
-
-    std::cout << "find components" << std::endl;
     // Identifies clusters of vertices which are reconstructed to disparate meshes
-    find_components(org_vertices, component_vertices, in_smoothed_v,
-                    component_smoothed_v, org_normals, component_normals, kdTree,
-                    opts.theta, opts.r, opts.k, opts.is_euclidean);
+    const std::vector<Point>& vertices = org_vertices;
+    const std::vector<Point>& smoothed_v = in_smoothed_v;
+    const std::vector<Vec3>& normals = org_normals;
+    double cross_conn_thresh = opts.theta;
+    double outlier_thresh = opts.r;
+    int k = opts.k;
+    bool isEuclidean = opts.is_euclidean;
+    assert(vertices.size() == smoothed_v.size());
+    assert(vertices.size() == normals.size());
+    double avg_edge_length = 0;
+    // TODO: can't we cache this?
+    AMGraph::NodeSet sets;
+    SimpGraph components;
+    for (int i = 0; i < vertices.size(); i++) {
+        sets.insert(components.add_node());
+    }
+    NodeID this_idx = 0;
+    // Construct graph
+    for (auto& vertex : smoothed_v) {
 
-    in_smoothed_v.clear();
-    return Components(
+        std::vector<NodeID> neighbors;
+        std::vector<double> neighbor_distance;
+        knn_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
+
+        // Filter out cross connection
+        {
+            std::vector<NodeID> temp;
+            Vec3 this_normal = normals[this_idx];
+            for (auto idx : neighbors) {
+                Vec3 neighbor_normal = normals[idx];
+                double cos_theta = dot(this_normal, neighbor_normal) /
+                    this_normal.length() / neighbor_normal.length();
+                double cos_thresh = cos(cross_conn_thresh / 180. * M_PI);
+                if (isEuclidean)
+                    cos_thresh = 0.;
+                if (cos_theta >= cos_thresh) {
+                    temp.push_back(idx);
+                }
+            }
+            neighbors = std::move(temp);
+        }
+
+        for (int i = 0; i < neighbors.size(); i++) {
+            NodeID idx = neighbors[i];
+            double length = neighbor_distance[i];
+
+            if (this_idx == idx)
+                continue;
+
+            avg_edge_length += length;
+
+            for (int j = 0; j < k; j++) {
+                if (components.find_edge(this_idx, idx) != AMGraph::InvalidEdgeID)
+                    continue;
+                components.connect_nodes(this_idx, idx);
+            }
+        }
+        this_idx++;
+    }
+    const double thresh_r = avg_edge_length / static_cast<double>(components.no_edges()) * outlier_thresh;
+    // Remove Edges Longer than the threshold
+    std::vector<std::pair<NodeID, NodeID>> edge_rm_v;
+    for (NodeID i = 0; i < components.no_nodes(); i++) {
+        for (auto& edges = components.edges(i); const auto& pair : edges) {
+            NodeID vertex1 = i;
+            NodeID vertex2 = pair.first;
+            double edge_length = (vertices[vertex1] - vertices[vertex2]).length();
+
+            if (edge_length > thresh_r) {
+                edge_rm_v.emplace_back(vertex1, vertex2);
+            }
+        }
+    }
+    for (auto& [fst, snd] : edge_rm_v) {
+        components.disconnect_nodes(fst, snd);
+    }
+    // Find Components
+    std::vector<AMGraph::NodeSet> components_vec;
+    components_vec = connected_components(components, sets);
+    const auto num = components_vec.size();
+    std::cout << "The input contains " << num << " connected components." << std::endl;
+    // Valid Components and create new vectors for components
+    auto threshold = std::min<size_t>(vertices.size(), 100);
+    for (auto& component : components_vec) {
+        if (component.size() >= threshold) {
+            std::vector<Vec3> this_normals;
+            this_normals.reserve(component.size());
+            std::vector<Point> this_vertices;
+            this_vertices.reserve(component.size());
+            std::vector<Point> this_smoothed_v;
+            this_smoothed_v.reserve(component.size());
+            for (const auto& element : component) {
+                this_vertices.push_back(vertices[element]);
+                this_smoothed_v.push_back(smoothed_v[element]);
+                this_normals.push_back(normals[element]);
+            }
+            component_normals.emplace_back(std::move(this_normals));
+            component_vertices.emplace_back(std::move(this_vertices));
+            component_smoothed_v.emplace_back(std::move(this_smoothed_v));
+        }
+    }
+    std::cout << component_vertices.size() << " of them will be reconstructed." << std::endl;
+
+ return Components(
         std::move(component_vertices),
         std::move(component_smoothed_v),
         std::move(component_normals)
@@ -2392,6 +2359,10 @@ auto point_cloud_to_mesh(
 {
     auto opts2 = opts;
     ::HMesh::Manifold output;
+    Timer timer;
+
+    timer.start("Whole process");
+
     auto vertices_copy = vertices;
     auto normals_copy = normals;
     Util::ThreadPool pool(15);
@@ -2400,29 +2371,30 @@ auto point_cloud_to_mesh(
     } else {
         assert(vertices.size() == normals.size());
     }
-    
-    Timer timer;
-    timer
-        .create("Whole process")
-        .create("Estimate normals")
-        .create("Algorithm")
-        .create("Split components");
-    timer
-        .start("Whole process");
 
     // Estimate normals & orientation & weighted smoothing
-    timer.start("Estimate normals");
+    timer.start("Estimate and smooth normals");
     const auto indices = indices_from(vertices_copy);
 
     std::vector<Point> in_smoothed_v = estimate_normals_and_smooth(pool, vertices_copy, normals_copy, indices, opts2);
-    timer.end("Estimate normals");
+    timer.end("Estimate and smooth normals");
+
+    timer.start("Correct normal orientation");
+    const Tree kdTree = build_KDTree(in_smoothed_v, indices);
+    std::cout << "correct normal orientation\n";
+
+    if (!opts2.normals_included) {
+        correct_normal_orientation(pool, kdTree, in_smoothed_v, normals_copy, opts.k);
+    }
+    timer.end("Correct normal orientation");
 
     // Find components
     timer.start("Split components");
+    std::cout << "find components\n";
     auto [component_vertices,
         component_smoothed_v,
-        component_normals] = split_components(pool,
-        std::move(vertices_copy), std::move(normals_copy), std::move(in_smoothed_v), indices, opts2);
+        component_normals] =
+            split_components(pool, kdTree, std::move(vertices_copy), std::move(normals_copy), std::move(in_smoothed_v), opts2);
     timer.end("Split components");
     // There is no guarantee that there is more than one component, and components can
     // be highly non-uniform in terms of how many primitives they have. That means we cannot
