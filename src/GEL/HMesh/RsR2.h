@@ -323,9 +323,9 @@ void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& sha
 
 // Algorithm
 
-bool geometry_check(const RSGraph& mst, const TEdge& candidate, const Tree& kdTree);
+// bool geometry_check(const RSGraph& mst, const TEdge& candidate, const Tree& kdTree);
 
-bool Vanilla_check(RSGraph& mst, TEdge& candidate, Tree& kdTree);
+bool Vanilla_check(RSGraph& mst, const TEdge& candidate, const Tree& kdTree);
 
 bool isIntersecting(const RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4);
 
