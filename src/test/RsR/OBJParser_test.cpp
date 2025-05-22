@@ -107,17 +107,12 @@ PointCloud read_obj(std::string& file_path) {
 
 TEST_CASE("read raw obj")
 {
-    auto file_path = "../../../../data/PointClouds/bun_complete.obj";
+    auto file_path = "../../../../data/bunny.obj";
     auto file_path_str = std::string(file_path);
     auto robj = read_raw_obj(file_path);
     auto pc = read_obj(file_path_str);
     CHECK_EQ(robj.vertices.size(), pc.vertices.size());
     CHECK_EQ(robj.normals.size(), pc.normals.size());
-    // for (size_t i = 0; i < robj.vertices.size(); ++i) {
-    //     CHECK_EQ(robj.vertices.at(i), pc.vertices.at(i));
-    // }
-    // for (size_t i = 0; i < robj.normals.size(); ++i) {
-    //     CHECK_EQ(robj.normals.at(i), pc.normals.at(i));
-    // }
+
     std::cout << pc.vertices.size() << std::endl;
 }
