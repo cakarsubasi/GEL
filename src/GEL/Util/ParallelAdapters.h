@@ -81,13 +81,14 @@ namespace ParallelUtil
     }
 
     /// @brief Ceiling division
-    /// @tparam IntegerType Integral type
+    /// @tparam IntegerType1 Integral type
+    /// @tparam IntegerType2 Integral type
     /// @param lhs lhs
     /// @param rhs rhs
     /// @return ceil(lhs / div)
-    template <typename IntegerType>
-        requires std::is_integral_v<IntegerType>
-    constexpr IntegerType div_ceil(IntegerType lhs, IntegerType rhs)
+    template <typename IntegerType1, typename IntegerType2>
+        requires std::is_integral_v<IntegerType1> && std::is_integral_v<IntegerType2>
+    constexpr IntegerType1 div_ceil(IntegerType1 lhs, IntegerType2 rhs)
     {
         return lhs / rhs + (lhs % rhs != 0);
     }
@@ -141,8 +142,7 @@ using namespace Concepts;
 ///
 template <typename F,
           typename InputIt,
-          bool BoundsChecking = true,
-          double LoadFactor = 1.0
+          bool BoundsChecking = true
 >
     requires
     ContiguousSizedCollection<InputIt> &&
@@ -516,7 +516,6 @@ auto parallel_filter(
         // safety post-condition: we need to manually resize out to the correct size at the end
         out.resize(work_size);
     }
-    // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
     for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
@@ -592,7 +591,6 @@ auto parallel_map_filter(
         // safety post-condition: we need to manually resize out to the correct size at the end
         out.resize(work_size);
     }
-    // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
     for (auto thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
@@ -648,10 +646,9 @@ template <typename F,
           bool BoundsChecking = false>
     requires
     ContiguousSizedCollection<InputIt> &&
-    ContiguousSizedCollection<OutputIt>
-// &&
-//BinaryFunction<F, size_t, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
-//                 OutputIt>::value_type>>
+    ContiguousSizedCollection<OutputIt> &&
+    BinaryFunction<F, size_t, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
+                  OutputIt>::value_type>>
 auto parallel_enumerate_map_filter(
     Executor& pool,
     F&& f,
@@ -672,7 +669,6 @@ auto parallel_enumerate_map_filter(
         // safety post-condition: we need to manually resize out to the correct size at the end
         out.resize(work_size);
     }
-    // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
     for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
@@ -757,7 +753,6 @@ auto parallel_map2_filter(
         // safety post-condition: we need to manually resize out to the correct size at the end
         out.resize(work_size);
     }
-    // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
     for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
@@ -863,7 +858,6 @@ auto parallel_map2_filter2(
         // safety post-condition: we need to manually resize out to the correct size at the end
         out2.resize(work_size);
     }
-    // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
     for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
@@ -975,7 +969,6 @@ auto parallel_enumerate_map2_filter2(
         // safety post-condition: we need to manually resize out to the correct size at the end
         out2.resize(work_size);
     }
-    // TODO: move this to a scratch space so we amortize its creation
     std::vector<size_t> counters(pool_size, 0);
     for (size_t thread_id = 0; thread_id < pool_size; ++thread_id) {
         auto& thread_counter = counters[thread_id];
