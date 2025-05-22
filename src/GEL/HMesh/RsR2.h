@@ -154,7 +154,7 @@ class SimpGraph : public AMGraph {
 public:
     Util::AttribVec<AMGraph::EdgeID, Edge> m_edges;
 
-    EdgeID connect_nodes(const NodeID source, const NodeID target, const float weight = 0.)
+    EdgeID connect_nodes(const NodeID source, const NodeID target, const double weight = 0.)
     {
         const EdgeID id = AMGraph::connect_nodes(source, target);
         m_edges[id].weight = weight;
@@ -233,7 +233,7 @@ public:
         m_vertices[root].ordered_neighbors.insert(Neighbor(u, v, neighbor));
     }
 
-    EdgeID add_edge(const NodeID source, const NodeID target, const float weight = 0.)
+    EdgeID add_edge(const NodeID source, const NodeID target, const double weight = 0.)
     {
         const EdgeID id = this->connect_nodes(source, target);
         assert(id != InvalidEdgeID);
@@ -338,7 +338,7 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 void add_face(RSGraph& G, const std::vector<NodeID>& item,
               std::vector<std::vector<NodeID>>& faces);
 
-void connect_handle(const std::vector<Point>& smoothed_v, Tree& KDTree,
+void connect_handle(const std::vector<Point>& smoothed_v, Tree& kdTree,
                     RSGraph& mst, std::vector<NodeID>& connected_handle_root, int k,
                     int step_thresh, bool isEuclidean);
 

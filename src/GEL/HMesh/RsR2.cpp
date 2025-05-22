@@ -6,9 +6,6 @@
 
 namespace GEL::HMesh::RSR
 {
-
-
-
 struct m_cmp {
     bool operator()(const std::pair<std::vector<NodeID>, float>& left,
                     const std::pair<std::vector<NodeID>, float>& right) const
@@ -53,18 +50,22 @@ void heap_sort(Heap& heap)
     }
 }
 
-template <typename Q>
-constexpr typename Q::value_type queue_pop_front(Q& queue)
+template <typename T, typename Container, typename Comparator>
+constexpr T queue_pop_front(std::priority_queue<T, Container, Comparator>& queue)
 {
-    if constexpr (std::is_same_v<Q, std::priority_queue<typename Q::value_type>>) {
-        typename Q::value_type front = std::move(queue.top());
-        queue.pop();
-        return front;
-    } else {
-        typename Q::value_type front = std::move(queue.front());
-        queue.pop();
-        return front;
-    }
+    T front = std::move(queue.top());
+    queue.pop();
+    return front;
+
+}
+
+template <typename T>
+constexpr T queue_pop_front(std::queue<T>& queue)
+{
+    T front = std::move(queue.front());
+    queue.pop();
+    return front;
+
 }
 
 /// Erases an element and moves the last element in the vector in its place
@@ -145,18 +146,18 @@ auto collapse_points(
             const auto diff_weighted = safe_div(dot(diff, diff), dist);
             score += diff_weighted;
         }
-        point_scores.emplace_back(this_id, score);
+        point_scores.emplace_back(PointScore(this_id, score));
     }
 
     // better to use nth_element
-    const auto nth = static_cast<NodeID>(static_cast<double>(number_of_points) * collapse_factor);
+    const auto nth = static_cast<ssize_t>(static_cast<double>(number_of_points) * collapse_factor);
     std::ranges::nth_element(point_scores.begin(), point_scores.begin() + nth, point_scores.end(),
                              [](const auto& a, const auto& b) {
                                  return a.score > b.score;
                              });
 
     const auto remaining = number_of_points - nth;
-    const auto bin_size = Util::ParallelUtil::div_ceil(remaining, nth);
+    const auto [[maybe_unused]] bin_size = Util::ParallelUtil::div_ceil(remaining, nth);
     // step two, decide on the collapse
 
     std::vector<std::vector<NodeID>> collapses;
@@ -213,7 +214,7 @@ auto collapse_points(
 
     std::cout << "failures: " << failures << "\n";
 
-    return Collapse {
+    return Collapse{
         important_points_idx,
         collapses
     };
@@ -600,10 +601,10 @@ void init_graph(
             Point neighbor_pos = vertices[idx];
             Vec3 edge = neighbor_pos - vertex;
             const double Euclidean_dist = edge.length();
-            double weight = Euclidean_dist;
-            if (!isEuclidean) {
-                weight = cal_proj_dist(edge, this_normal, neighbor_normal);
-            }
+            const auto weight =
+                (isEuclidean)
+                    ? static_cast<float>(Euclidean_dist)
+                    : static_cast<float>(cal_proj_dist(edge, this_normal, neighbor_normal));
             if (weight > max_length[i])
                 max_length[i] = weight;
             if (weight > max_length[idx])
@@ -693,7 +694,7 @@ void weighted_smooth(
 
         std::vector<double> vertical_length;
         std::vector<double> weights;
-        const ssize_t limit = (neighbors.size() < 192) ? neighbors.size() : 192;
+        const ssize_t limit = (neighbors.size() < 192) ? static_cast<ssize_t>(neighbors.size()) : 192;
         vertical_length.reserve(limit);
         weights.reserve(limit);
         for (auto begin = neighbors.cbegin(); begin != neighbors.cbegin() + limit; ++begin) {
@@ -811,33 +812,31 @@ void minimum_spanning_tree(
     AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
 
     std::priority_queue<QElem> queue;
-    for (auto n : g.neighbors(root)) {
-        const auto d = CGLA::sqr_length(vertices[n] - vertices[root]);
-        queue.emplace(-d, root, n);
+    for (auto neighbor_id : g.neighbors(root)) {
+        const auto distance = CGLA::sqr_length(vertices[neighbor_id] - vertices[root]);
+        queue.emplace(-distance, root, neighbor_id);
     }
 
     while (!queue.empty()) {
-        auto [d, n, m] = queue_pop_front(queue);
+        if (auto [d, id1, id2] = queue_pop_front(queue);
+            !in_tree[id2]) {
+            in_tree[id2] = true;
 
-        if (!in_tree[m]) {
-            in_tree[m] = true;
+            Vec3 edge = gn.m_vertices[id2].coords - gn.m_vertices[id1].coords;
+            const auto distance =
+                (isEuclidean)
+                    ? edge.length()
+                    : cal_proj_dist(edge, gn.m_vertices[id2].normal, gn.m_vertices[id1].normal);
 
-            Vec3 edge = gn.m_vertices[m].coords - gn.m_vertices[n].coords;
-            const double Euclidean_dist = edge.length();
-            const double projection_dist = cal_proj_dist(edge, gn.m_vertices[m].normal, gn.m_vertices[n].normal);
             [[unlikely]]
-            if (std::isnan(projection_dist) || std::isnan(Euclidean_dist))
+            if (std::isnan(distance))
                 std::cerr << "debug" << std::endl;
 
-            if (isEuclidean)
-                gn.add_edge(m, n, Euclidean_dist);
-            else
-                gn.add_edge(m, n, projection_dist);
+            gn.add_edge(id2, id1, distance);
 
-            //gn.connect_nodes(n, m);
-            for (auto nn : g.neighbors(m)) {
-                const auto d_nn_m = CGLA::sqr_length(vertices[nn] - vertices[m]);
-                queue.emplace(-d_nn_m, m, nn);
+            for (auto nn : g.neighbors(id2)) {
+                const auto d_nn_m = CGLA::sqr_length(vertices[nn] - vertices[id2]);
+                queue.emplace(-d_nn_m, id2, nn);
             }
         }
     }
@@ -850,7 +849,7 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     if (root == AMGraph::InvalidNodeID)
         root = 0;
 
-    for (auto n : g.node_ids())
+    for ([[maybe_unused]] auto n : g.node_ids())
         gn.add_node();
 
     AttribVec<NodeID, unsigned char> in_tree(gn.no_nodes(), false);
@@ -858,7 +857,6 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     std::priority_queue<QElem> Q;
     for (auto n : g.neighbors(root)) {
         const auto d = g.get_weight(n, root);
-        //auto d = CGLA::sqr_length(g.m_vertices[n].coords - g.m_vertices[root].coords);
         Q.emplace(-d, root, n);
     }
 
@@ -921,7 +919,7 @@ void correct_normal_orientation(
                 if (g_angle_temp.find_edge(i, neighbor) != AMGraph::InvalidEdgeID)
                     continue;
                 const Vec3 neighbor_normal = normals[neighbor];
-                const float angle_weight = cal_angle_based_weight(this_normal, neighbor_normal);
+                const double angle_weight = cal_angle_based_weight(this_normal, neighbor_normal);
 
                 g_angle_temp.connect_nodes(i, neighbor, angle_weight);
             }
@@ -1130,7 +1128,6 @@ bool isIntersecting(const RSGraph& mst, const NodeID v1, const NodeID v2, const 
     * @param mst: graph and vertex information
     * @param candidate: the edge to be examed
     * @param kdTree: kd-tree for knn query
-    * @param tr_dist: distance container
     *
     * @return if the candidate pass the check
     */
@@ -1147,12 +1144,12 @@ bool geometry_check(RSGraph& mst, const TEdge& candidate, const Tree& kdTree)
     mean_normal.normalize();
 
     const Point search_center = p1 + (p2 - p1) / 2.;
-    const float radius = (p2 - p1).length() / 2.;
+    const double radius = (p2 - p1).length() / 2.;
     std::vector<NodeID> neighbors;
     std::vector<double> distance;
     NN_search(search_center, kdTree, static_cast<float>(radius * 3.), neighbors, distance, false);
 
-    std::set<int> rejection_neighbor_set;
+    std::unordered_set<NodeID> rejection_neighbor_set;
     for (const unsigned long neighbor : neighbors) {
         if (neighbor == v1 || neighbor == v2)
             continue;
@@ -1252,29 +1249,25 @@ bool routine_check(const RSGraph& mst, const FaceType& triangle)
     const Point p1 = mst.m_vertices[v1].coords;
     const Point p2 = mst.m_vertices[v2].coords;
     const Point p3 = mst.m_vertices[v3].coords;
+    const auto len_ui = (p1 - p2).length();
+    const auto len_wi = (p3 - p2).length();
+    const auto len_uw = (p1 - p3).length();
 
-    {
-        const float len_ui = (p1 - p2).length();
-        const float len_wi = (p3 - p2).length();
-        const float len_uw = (p1 - p3).length();
-
-        float max_value = std::acos(std::clamp<double>(
-            dot((p3 - p2), (p1 - p2)) / len_ui /
-            len_wi, -1, 1));
-        float radian = std::acos(std::clamp<double>(
-            dot((p2 - p1), (p3 - p1)) / len_ui /
-            len_uw, -1, 1));
-        if (radian > max_value)
-            max_value = radian;
-        radian = std::acos(std::clamp<double>(
-            dot((p1 - p3), (p2 - p3)) / len_uw /
-            len_wi, -1, 1));
-        if (radian > max_value)
-            max_value = radian;
-        if (max_value > 175. / 180. * M_PI)
-            return true;
-    }
-
+    auto max_value = std::acos(std::clamp<double>(
+        dot((p3 - p2), (p1 - p2)) / len_ui /
+        len_wi, -1, 1));
+    auto radian = std::acos(std::clamp<double>(
+        dot((p2 - p1), (p3 - p1)) / len_ui /
+        len_uw, -1, 1));
+    if (radian > max_value)
+        max_value = radian;
+    radian = std::acos(std::clamp<double>(
+        dot((p1 - p3), (p2 - p3)) / len_uw /
+        len_wi, -1, 1));
+    if (radian > max_value)
+        max_value = radian;
+    if (max_value > 175. / 180. * M_PI)
+        return true;
 
     if (mst.m_edges[mst.find_edge(v1, v3)].ref_time == 2 ||
         mst.m_edges[mst.find_edge(v2, v3)].ref_time == 2)
@@ -1284,21 +1277,17 @@ bool routine_check(const RSGraph& mst, const FaceType& triangle)
 }
 
 
-
-
 void add_face(RSGraph& G, const FaceType& item,
               std::vector<FaceType>& faces)
 {
-    NodeID v_i = item[0];
-    NodeID v_u = item[1];
-    NodeID v_w = item[2];
+    const NodeID v_i = item[0];
+    const NodeID v_u = item[1];
+    const NodeID v_w = item[2];
 
     // Maintain face exist for detecting holes
-    {
-        get_neighbor_info(G, v_i, v_u).faceExist = true;
-        get_neighbor_info(G, v_u, v_w).faceExist = true;
-        get_neighbor_info(G, v_w, v_i).faceExist = true;
-    }
+    get_neighbor_info(G, v_i, v_u).faceExist = true;
+    get_neighbor_info(G, v_u, v_w).faceExist = true;
+    get_neighbor_info(G, v_w, v_i).faceExist = true;
 
     G.m_edges[G.find_edge(v_u, v_w)].ref_time += 1;
     G.m_edges[G.find_edge(v_i, v_w)].ref_time += 1;
@@ -1324,15 +1313,15 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<FaceType>& fa
     }
 
     const auto possible_root1 = predecessor(mst, v1, v2).v;
-    float angle1 = cal_radians_3d(p1 - mst.m_vertices[possible_root1].coords,
+    const auto angle1 = cal_radians_3d(p1 - mst.m_vertices[possible_root1].coords,
                                   mst.m_vertices[possible_root1].normal, p2 - mst.m_vertices[possible_root1].coords);
-    auto possible_root2 = predecessor(mst, v2, v1).v;
-    float angle2 = cal_radians_3d(p2 - mst.m_vertices[possible_root2].coords,
+    const auto possible_root2 = predecessor(mst, v2, v1).v;
+    const auto angle2 = cal_radians_3d(p2 - mst.m_vertices[possible_root2].coords,
                                   mst.m_vertices[possible_root2].normal, p1 - mst.m_vertices[possible_root2].coords);
 
     bool isValid = true;
     std::vector<FaceType> temp;
-    for (auto v3 : share_neighbors) {
+    for (const auto v3 : share_neighbors) {
         FaceType triangle{v1, v2, v3};
         if (v3 == possible_root1 && angle1 < M_PI) {
             if (routine_check(mst, triangle)) {
@@ -1379,8 +1368,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<FaceType>& fa
         isValid = false;
 
     if (isValid) {
-        AMGraph::EdgeID added_edge = mst.add_edge(v1, v2,
-                                                  edge_length);
+        mst.add_edge(v1, v2, edge_length);
         maintain_face_loop(mst, v1, v2);
         for (auto& face : temp) {
             add_face(mst, face, faces);
@@ -1396,7 +1384,6 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<FaceType>& fa
     * @param smoothed_v: smoothed vertices of the point cloud
     * @param mst: graph and vertex information
     * @param kdTree: kd-tree for knn query
-    * @param tr_dist: distance container
     * @param connected_handle_root: [OUT] log the connected handles
     * @param k: number of kNN search
     * @param isEuclidean: if to use Euclidean distance
@@ -1405,8 +1392,10 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<FaceType>& fa
     * @return None
     */
 void connect_handle(
-    const std::vector<Point>& smoothed_v, Tree& KDTree,
-    RSGraph& mst, std::vector<NodeID>& connected_handle_root,
+    const std::vector<Point>& smoothed_v,
+    Tree& kdTree,
+    RSGraph& mst,
+    std::vector<NodeID>& connected_handle_root,
     int k,
     int step_thresh,
     bool isEuclidean)
@@ -1418,12 +1407,11 @@ void connect_handle(
     {
         for (int i = 0; i < mst.no_nodes(); i++) {
             std::set<Neighbor>& neighbors = mst.m_vertices[i].ordered_neighbors;
-            float last_angle = (--neighbors.end())->angle;
-            float this_angle;
+            auto last_angle = (--neighbors.end())->angle;
 
             for (auto& neighbor : neighbors) {
-                this_angle = neighbor.angle;
-                float angle_diff = this_angle - last_angle;
+                auto this_angle = neighbor.angle;
+                auto angle_diff = this_angle - last_angle;
                 if (angle_diff < 0)
                     angle_diff += 2 * M_PI;
                 if (angle_diff > M_PI)
@@ -1441,17 +1429,15 @@ void connect_handle(
     double last_dist = INFINITY;
     Point last_v(0., 0., 0.);
     for (const auto& this_v : imp_node) {
-        // Point query = mst.m_vertices[this_v].coords;
-        // Vec3 query_normal = mst.m_vertices[this_v].normal;
         std::vector<NodeID> neighbors;
         std::vector<double> dists;
 
         // Potential handle collection
         uint tree, to_tree;
-        int validIdx = -1;
+        NodeID validIdx = -1;
 
         last_dist += (smoothed_v[this_v] - last_v).length();
-        knn_search(smoothed_v[this_v], KDTree, k, neighbors, dists, true);
+        knn_search(smoothed_v[this_v], kdTree, k, neighbors, dists, true);
         last_dist = dists[dists.size() - 1];
         last_v = smoothed_v[this_v];
 
@@ -1462,7 +1448,7 @@ void connect_handle(
                 continue;
             tree = mst.etf.representative((predecessor(mst, this_v, neighbor).tree_id));
             to_tree = mst.etf.representative(predecessor(mst, neighbor, this_v).tree_id);
-            if (geometry_check(mst, candidate, KDTree) && tree != to_tree) {
+            if (geometry_check(mst, candidate, kdTree) && tree != to_tree) {
                 validIdx = i;
                 break;
             }
@@ -1495,20 +1481,19 @@ void connect_handle(
     // Sort
     std::vector<m_face_pair> sorted_face;
     for (auto key = face_connections.begin(); key != face_connections.end(); ++key) {
-        int length = face_connections[key->first].size();
-        sorted_face.push_back(m_face_pair(length, key->first));
+        auto length = face_connections[key->first].size();
+        sorted_face.emplace_back(length, key->first);
     }
-    std::sort(sorted_face.begin(), sorted_face.end(), face_comparator);
+    std::ranges::sort(sorted_face, face_comparator);
     for (auto& i : sorted_face) {
-        std::string key = i.second;
-        std::vector<int> idx_vec = face_connections[key];
+        const std::string& key = i.second;
+        const std::vector<int>& idx_vec = face_connections[key];
         if (idx_vec.size() <= 5)
             break;
         if (mst.exp_genus >= 0 && num >= mst.exp_genus)
             break;
         Point query;
         NodeID connected_neighbor, this_v;
-        Edge added_edge;
         bool isFind = false;
         for (int idx : idx_vec) {
             this_v = connect_p[idx];
@@ -1519,7 +1504,7 @@ void connect_handle(
             if (steps > step_thresh) {
                 isFind = true;
                 const TEdge candidate(this_v, connected_neighbor);
-                if (geometry_check(mst, candidate, KDTree)) {
+                if (geometry_check(mst, candidate, kdTree)) {
                     Vec3 edge = query - mst.m_vertices[connected_neighbor].coords;
                     double Euclidean_dist = edge.length();
                     double projection_dist = cal_proj_dist(edge, mst.m_vertices[this_v].normal,
@@ -1544,9 +1529,11 @@ void connect_handle(
     std::cout << std::to_string(edge_num) << " edges are connected." << std::endl;
 }
 
-bool explore(RSGraph& G, int i, m_priority_queue& queue,
-             std::unordered_set<std::string>& faces_in_queue, float avg_edge_length
-             , std::vector<float>& length_thresh)
+bool explore(
+    RSGraph& G,
+    const NodeID i,
+    m_priority_queue& queue,
+    const std::vector<float>& length_thresh)
 {
     const NodeID v_i = i;
     bool isFound = false;
@@ -1554,27 +1541,19 @@ bool explore(RSGraph& G, int i, m_priority_queue& queue,
         NodeID v_u = neighbor.v;
         NodeID v_w = successor(G, i, v_u).v;
 
-        //if ((v_u == 1751375 && v_w == 1888150) ||
-        //	(v_w == 1751375 && v_u == 1888150))
-        //	std::cout << "debug here" << std::endl;
-
-        //if ((v_u == 33020 && v_w == 30023) || (v_w == 33020 && v_u == 30023)) {
-        //	std::cout << "debug here" << std::endl;
-        //}
-
         Point w_pos = G.m_vertices[v_w].coords;
         Point u_pos = G.m_vertices[v_u].coords;
         Point i_pos = G.m_vertices[v_i].coords;
         Vec3 i_normal = G.m_vertices[v_i].normal;
         Vec3 u_normal = G.m_vertices[v_u].normal;
         Vec3 w_normal = G.m_vertices[v_w].normal;
-        float angle = cal_radians_3d(w_pos - i_pos, i_normal,
-                                     u_pos - i_pos);
-        bool isLargerThanPi = angle < M_PI;
+        const auto angle = cal_radians_3d(w_pos - i_pos, i_normal,
+                                          u_pos - i_pos);
+        const bool isLargerThanPi = angle < M_PI;
         std::vector<NodeID> face_vector{v_i, v_u, v_w};
         if (v_u != v_w && isLargerThanPi) {
             if (G.find_edge(v_u, v_w) == AMGraph::InvalidEdgeID) {
-                float score = (G.m_vertices[v_u].coords - G.m_vertices[v_w].coords).length();
+                auto score = (G.m_vertices[v_u].coords - G.m_vertices[v_w].coords).length();
                 if (!G.isEuclidean) {
                     score = cal_proj_dist(G.m_vertices[v_u].coords - G.m_vertices[v_w].coords,
                                           u_normal, w_normal);
@@ -1611,37 +1590,34 @@ Vec3 triangle_mean_normal(const Vec3& normal1, const Vec3& normal2, const Vec3& 
     return output;
 }
 
-bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branch2)
+bool check_branch_validity(RSGraph& G, const NodeID root, const NodeID branch1, const NodeID branch2)
 {
-    Point pos_i = G.m_vertices[root].coords;
-    Point pos_u = G.m_vertices[branch1].coords;
-    Point pos_w = G.m_vertices[branch2].coords;
-    Vec3 normal_i = G.m_vertices[root].normal;
-    Vec3 normal_u = G.m_vertices[branch1].normal;
-    Vec3 normal_w = G.m_vertices[branch2].normal;
+    const Point pos_i = G.m_vertices[root].coords;
+    const Point pos_u = G.m_vertices[branch1].coords;
+    const Point pos_w = G.m_vertices[branch2].coords;
+    const Vec3 normal_u = G.m_vertices[branch1].normal;
+    const Vec3 normal_w = G.m_vertices[branch2].normal;
 
     // Option 1
     std::vector<Point> triangle_pos{pos_i, pos_u, pos_w};
-    //Vector face_normal = CGAL::cross_product(pos_i - pos_u, pos_w - pos_u);
-    Vec3 face_normal = triangle_mean_normal(normal_i, normal_u, normal_w);
 
-    float angle_thresh = 0. / 180. * M_PI;
+    constexpr auto angle_thresh = 0. / 180. * M_PI;
 
     // Check u's RS validity
-    float this_radian = cal_radians_3d(pos_w - pos_u, normal_u);
+    auto this_radian = cal_radians_3d(pos_w - pos_u, normal_u);
     auto former = predecessor(G, branch1, branch2);
     auto next = successor(G, branch1, branch2);
     if (G.isFinal) {
         bool isValid = false;
         if (next.v == root) {
-            float diff = next.angle - this_radian;
+            auto diff = next.angle - this_radian;
             if (diff < 0)
                 diff += 2 * M_PI;
             if (diff < M_PI)
                 isValid = true;
         }
         if (former.v == root) {
-            float diff = -former.angle + this_radian;
+            auto diff = -former.angle + this_radian;
             if (diff < 0)
                 diff += 2 * M_PI;
             if (diff < M_PI)
@@ -1650,7 +1626,7 @@ bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branc
         if (!isValid)
             return false;
     } else {
-        float diff = next.angle - this_radian;
+        auto diff = next.angle - this_radian;
         if (diff < 0)
             diff += 2 * M_PI;
         if (next.v != root || diff > M_PI) {
@@ -1659,13 +1635,11 @@ bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branc
     }
 
     // Thresh on angle
-    {
-        float diff_angle_thresh = this_radian - former.angle;
-        if (diff_angle_thresh < 0)
-            diff_angle_thresh += M_PI * 2.;
-        if (diff_angle_thresh < angle_thresh)
-            return false;
-    }
+    auto diff_angle_thresh = this_radian - former.angle;
+    if (diff_angle_thresh < 0)
+        diff_angle_thresh += M_PI * 2.;
+    if (diff_angle_thresh < angle_thresh)
+        return false;
 
     //Check w
     this_radian = cal_radians_3d(pos_u - pos_w, normal_w);
@@ -1674,14 +1648,14 @@ bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branc
     if (G.isFinal) {
         bool isValid = false;
         if (next.v == root) {
-            float diff = next.angle - this_radian;
+            auto diff = next.angle - this_radian;
             if (diff < 0)
                 diff += 2 * M_PI;
             if (diff < M_PI)
                 isValid = true;
         }
         if (former.v == root) {
-            float diff = -former.angle + this_radian;
+            auto diff = -former.angle + this_radian;
             if (diff < 0)
                 diff += 2 * M_PI;
             if (diff < M_PI)
@@ -1690,7 +1664,7 @@ bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branc
         if (!isValid)
             return false;
     } else {
-        float diff = -former.angle + this_radian;
+        auto diff = -former.angle + this_radian;
         if (diff < 0)
             diff += 2 * M_PI;
         if (former.v != root || diff > M_PI) {
@@ -1699,34 +1673,27 @@ bool check_branch_validity(RSGraph& G, NodeID root, NodeID branch1, NodeID branc
     }
 
     // Thresh on angle
-    {
-        float diff_angle_thresh = -this_radian + next.angle + 2. * M_PI;
-        if (diff_angle_thresh < angle_thresh)
-            return false;
-    }
+    if (const auto diff_angle_thresh2 = -this_radian + next.angle + 2. * M_PI;
+        diff_angle_thresh2 < angle_thresh)
+        return false;
+
     return true;
 }
 
 
 // TODO: validity of what?
-bool check_validity(RSGraph& G, std::pair<std::vector<NodeID>, float>& item,
-                    const Tree& KDTree, bool isFaceloop, bool isFinalize)
+bool check_validity(
+    RSGraph& G,
+    const std::pair<std::vector<NodeID>, float>& item,
+    const bool isFinalize)
 {
-    int i = item.first[0];
-    int u = item.first[1];
-    int w = item.first[2];
-    NodeID v_i = i;
-    NodeID v_u = u;
-    NodeID v_w = w;
-    Point pos_i = G.m_vertices[v_i].coords;
-    Point pos_u = G.m_vertices[v_u].coords;
-    Point pos_w = G.m_vertices[v_w].coords;
-    Vec3 normal_i = G.m_vertices[v_i].normal;
-    Vec3 normal_u = G.m_vertices[v_u].normal;
-    Vec3 normal_w = G.m_vertices[v_w].normal;
-
-    //if (i == 388237)
-    //	std::cout << u << " " << w << std::endl;
+    const NodeID v_i = item.first[0];
+    const NodeID v_u = item.first[1];
+    const NodeID v_w = item.first[2];
+    const Point pos_i = G.m_vertices[v_i].coords;
+    const Point pos_u = G.m_vertices[v_u].coords;
+    const Point pos_w = G.m_vertices[v_w].coords;
+    const Vec3 normal_i = G.m_vertices[v_i].normal;
 
     if (G.find_edge(v_u, v_w) != AMGraph::InvalidEdgeID)
         return false;
@@ -1738,7 +1705,7 @@ bool check_validity(RSGraph& G, std::pair<std::vector<NodeID>, float>& item,
 
     // Check this rotation system
     bool isValid = (successor(G, v_i, v_u).v == v_w);
-    float angle = cal_radians_3d(pos_w - pos_i, normal_i, pos_u - pos_i);
+    auto angle = cal_radians_3d(pos_w - pos_i, normal_i, pos_u - pos_i);
     if (angle > M_PI)
         isValid = false;
 
@@ -1777,7 +1744,7 @@ void checkAndForce(const NodeID v_u, const NodeID v_w, RSGraph& G, m_priority_qu
         int idx = 0;
         for (auto& neighbor : G.m_vertices[v_i].ordered_neighbors) {
             for (auto& neighbor_neighbor : G.m_vertices[neighbor.v].ordered_neighbors) {
-                if (neighbor_ids_set.find(neighbor_neighbor.v) != neighbor_ids_set.end()) {
+                if (neighbor_ids_set.contains(neighbor_neighbor.v)) {
                     connection_count[idx] += 1;
                 }
             }
@@ -1792,11 +1759,11 @@ void checkAndForce(const NodeID v_u, const NodeID v_w, RSGraph& G, m_priority_qu
         }
 
         if (not_full.size() == 2) {
-            NodeID v_u = neighbor_ids[not_full[0]];
-            NodeID v_w = neighbor_ids[not_full[1]];
+            const NodeID v_u = neighbor_ids[not_full[0]];
+            const NodeID v_w = neighbor_ids[not_full[1]];
             const Vec3 u_normal = G.m_vertices[v_u].normal;
             const Vec3 w_normal = G.m_vertices[v_w].normal;
-            float score = (G.m_vertices[v_u].coords - G.m_vertices[v_w].coords).length();
+            auto score = (G.m_vertices[v_u].coords - G.m_vertices[v_w].coords).length();
             if (!G.isEuclidean) {
                 score = cal_proj_dist(G.m_vertices[v_u].coords - G.m_vertices[v_w].coords,
                                       u_normal, w_normal);
@@ -1804,7 +1771,7 @@ void checkAndForce(const NodeID v_u, const NodeID v_w, RSGraph& G, m_priority_qu
             if (score > length_thresh[v_u] || score > length_thresh[v_w])
                 return;
             std::vector<NodeID> face_vector{v_i, neighbor_ids[not_full[0]], neighbor_ids[not_full[1]]};
-            std::pair<std::vector<NodeID>, float> queue_item(face_vector, -1);
+            const std::pair<std::vector<NodeID>, float> queue_item(face_vector, -1);
             queue.push(queue_item);
             break;
         }
@@ -1814,79 +1781,53 @@ void checkAndForce(const NodeID v_u, const NodeID v_w, RSGraph& G, m_priority_qu
 void triangulate(
     std::vector<std::vector<NodeID>>& faces,
     RSGraph& G,
-    const Tree& KDTree,
-    bool isFaceLoop,
-    bool isEuclidean,
-    std::vector<float>& length_thresh,
-    std::vector<NodeID>& connected_handle_root,
-    bool isFinalize = false)
+    const bool isEuclidean,
+    const std::vector<float>& length_thresh,
+    const std::vector<NodeID>& connected_handle_root,
+    const bool isFinalize = false)
 {
-    std::unordered_set<std::string> faces_in_queue;
     std::unordered_set<NodeID> to_visit;
-
     m_priority_queue queue;
-
-    float avg_edge_length = G.total_edge_length / G.no_edges();
-    //std::cout << G.no_edges() << std::endl;
 
     // Init priority queue
     for (int i = 0; i < G.no_nodes(); i++) {
         to_visit.insert(i);
     }
 
-    for (int i = 0; i < connected_handle_root.size(); i++) {
-        bool result = explore(G, connected_handle_root[i], queue, faces_in_queue, avg_edge_length, length_thresh);
-        to_visit.erase(connected_handle_root[i]);
+    for (unsigned long i : connected_handle_root) {
+        bool result = explore(G, i, queue, length_thresh);
+        to_visit.erase(i);
     }
 
     std::cout << "Global init done :)" << std::endl;
 
     int loop_time = 0;
 
-    while (to_visit.size() > 0) {
+    while (!to_visit.empty()) {
         while (!queue.empty()) {
             loop_time += 1;
-            std::pair<std::vector<NodeID>, float> item = queue.top();
-            queue.pop();
-
-            //std::cout << item.first[1] << " " << item.first[2] << std::endl;
-            //std::cout << item.second << std::endl;
-            //if (item.first[1] == 345 && item.first[2] == 426)
-            //    std::cout << item.second << std::endl;
+            std::pair<std::vector<NodeID>, float> item = queue_pop_front(queue);
 
             if (item.second >= 0) {
-                // Validity check
-                bool isValid = check_validity(G, item, KDTree, isFaceLoop, isFinalize);
-                if (!isValid)
+                if (!check_validity(G, item, isFinalize))
                     continue;
             }
 
             // Add the edge
-            NodeID v_i = item.first[0];
-            NodeID v_u = item.first[1];
-            NodeID v_w = item.first[2];
-            Point pos_i = G.m_vertices[v_i].coords;
-            Point pos_u = G.m_vertices[v_u].coords;
-            Point pos_w = G.m_vertices[v_w].coords;
-            Vec3 normal_i = G.m_vertices[v_i].normal;
-            Vec3 normal_u = G.m_vertices[v_u].normal;
-            Vec3 normal_w = G.m_vertices[v_w].normal;
+            const NodeID v_i = item.first[0];
+            const NodeID v_u = item.first[1];
+            const NodeID v_w = item.first[2];
+            const Point pos_u = G.m_vertices[v_u].coords;
+            const Point pos_w = G.m_vertices[v_w].coords;
 
-            float dist = (pos_u - pos_w).length();
             Vec3 edge = pos_u - pos_w;
-            float Euclidean_dist = (edge).length();
-            float projection_dist = cal_proj_dist(edge,
-                                                  G.m_vertices[v_u].normal, G.m_vertices[v_w].normal);
+            const auto distance =
+                (isEuclidean)
+                    ? edge.length()
+                    : cal_proj_dist(edge, G.m_vertices[v_u].normal, G.m_vertices[v_w].normal);
 
             if (G.find_edge(v_u, v_w) == AMGraph::InvalidEdgeID) {
-                Edge added_edge;
-                if (isEuclidean)
-                    G.add_edge(v_u, v_w, Euclidean_dist);
-                else
-                    G.add_edge(v_u, v_w, projection_dist);
-
-                avg_edge_length = G.total_edge_length / G.no_edges();
-
+                G.add_edge(v_u, v_w, distance);
                 add_face(G, item.first, faces);
             } else
                 continue;
@@ -1895,16 +1836,15 @@ void triangulate(
             {
                 std::vector<NodeID> share_neighbors;
                 find_common_neighbor(v_u, v_w, share_neighbors, G);
-                for (int idx = 0; idx < share_neighbors.size(); idx++) {
-                    NodeID incident_root = share_neighbors[idx];
+                for (const NodeID incident_root : share_neighbors) {
                     if (incident_root == v_i)
                         continue;
-                    std::vector<NodeID> face{incident_root, v_w, v_u};
+                    std::vector face{incident_root, v_w, v_u};
 
                     // Non-manifold edge check
-                    int time1 = G.m_edges[G.find_edge(incident_root, v_u)].ref_time;
-                    int time2 = G.m_edges[G.find_edge(incident_root, v_w)].ref_time;
-                    int time3 = G.m_edges[G.find_edge(v_u, v_w)].ref_time;
+                    const int time1 = G.m_edges[G.find_edge(incident_root, v_u)].ref_time;
+                    const int time2 = G.m_edges[G.find_edge(incident_root, v_w)].ref_time;
+                    const int time3 = G.m_edges[G.find_edge(v_u, v_w)].ref_time;
                     if (time1 == 2 || time2 == 2 || time3 == 2)
                         continue;
 
@@ -1917,9 +1857,9 @@ void triangulate(
 
             // Explore and sanity check
             bool isFound = false;
-            bool result = explore(G, v_u, queue, faces_in_queue, avg_edge_length, length_thresh);
+            bool result = explore(G, v_u, queue, length_thresh);
             isFound = isFound || result;
-            result = explore(G, v_w, queue, faces_in_queue, avg_edge_length, length_thresh);
+            result = explore(G, v_w, queue, length_thresh);
             isFound = isFound || result;
 
             if (isFinalize) {
@@ -1932,7 +1872,7 @@ void triangulate(
         if (!to_visit.empty()) {
             NodeID pick = *to_visit.begin();
             to_visit.erase(pick);
-            bool result = explore(G, pick, queue, faces_in_queue, avg_edge_length, length_thresh);
+            bool result = explore(G, pick, queue, length_thresh);
             // TODO: result is dropped?
         }
     }
@@ -1958,30 +1898,24 @@ void build_mst(
     const std::vector<Point>& vertices,
     const bool isEuclidean)
 {
-    //SimpGraph mst_temp;
-    //for (int i = 0; i < mst.no_nodes(); i++) {
-    //    mst_temp.add_node();
-    //}
     RSGraph temp;
     minimum_spanning_tree(g, root, temp, normals, vertices, isEuclidean);
 
     // Fix strong ambiguous points
     if (!isEuclidean) {
         for (int i = 0; i < temp.m_edges.size(); i++) {
-            NodeID source = temp.m_edges[i].source;
-            NodeID target = temp.m_edges[i].target;
-            Vec3 normal1 = temp.m_vertices[source].normal;
-            normal1 /= normal1.length();
-            Vec3 normal2 = temp.m_vertices[target].normal;
-            normal2 /= normal2.length();
-            Point pos1 = temp.m_vertices[source].coords;
-            Point pos2 = temp.m_vertices[target].coords;
+            const NodeID source = temp.m_edges[i].source;
+            const NodeID target = temp.m_edges[i].target;
+            const Vec3 normal1 = normalize(temp.m_vertices[source].normal);
+            const Vec3 normal2 = normalize(temp.m_vertices[target].normal);
+            const Point pos1 = temp.m_vertices[source].coords;
+            const Point pos2 = temp.m_vertices[target].coords;
             if (temp.valence(source) >= 2 && temp.valence(target) >= 2)
                 continue;
-            Vec3 edge = pos2 - pos1;
+            const Vec3 edge = pos2 - pos1;
 
             Vec3 normal_sum = normal1 + normal2;
-            float cos_angle = std::abs(dot(edge, normal_sum / normal_sum.length() / edge.length()));
+            const auto cos_angle = std::abs(dot(edge, normal_sum / normal_sum.length() / edge.length()));
             if (cos_angle > std::cos(10. / 180. * M_PI)) {
                 NodeID leaf, parent;
                 if (temp.valence(source) == 1) {
@@ -2317,8 +2251,7 @@ auto component_to_manifold(
         mst.isFinal = true;
         std::vector<NodeID> connected_handle_root;
         connect_handle(smoothed_v, kdTree, mst, connected_handle_root, opts.k, opts.n, opts.is_euclidean);
-        bool isFaceLoop = false;
-        triangulate(faces, mst, kdTree, isFaceLoop, opts.is_euclidean, connection_max_length, connected_handle_root);
+        triangulate(faces, mst, opts.is_euclidean, connection_max_length, connected_handle_root);
     }
 
     ::HMesh::Manifold res;
