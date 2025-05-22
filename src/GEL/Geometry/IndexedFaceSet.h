@@ -102,14 +102,6 @@ namespace Geometry
 			return verts[idx];
 		}
 
-		/// TODO: this is used to do a dirty import
-		/// TODO: remove this and replace it with a proper
-		/// TODO: obj importer
-		std::vector<CGLA::Vec3f> vertices_copy()
-		{
-			return verts;
-		}
-
 	};
 }
 
