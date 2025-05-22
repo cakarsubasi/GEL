@@ -335,9 +335,6 @@ void minimum_spanning_tree(
 
 void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn);
 
-bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces,
-                   Tree& KDTree, float edge_length);
-
 void add_face(RSGraph& G, const std::vector<NodeID>& item,
               std::vector<std::vector<NodeID>>& faces);
 

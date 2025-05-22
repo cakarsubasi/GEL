@@ -219,12 +219,6 @@ auto collapse_points(
     };
 }
 
-bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces, Tree& KDTree,
-    float edge_length) {}
-
-void expand_points()
-{}
-
 /**
     * @brief k nearest neighbor search
     *
@@ -289,7 +283,7 @@ void knn_search(const Point& query, const Tree& kdTree,
 }
 
 auto calculate_neighbors(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     const std::vector<Point>& vertices,
     const Tree& kdTree,
     const int k,
@@ -318,7 +312,7 @@ auto calculate_neighbors(
 
 /// TODO: consider more efficient ways of culling duplicate vertices
 void remove_duplicate_vertices(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     std::vector<Point>& vertices,
     std::vector<Vec3>& normals,
     const Tree& kdTree,
@@ -684,7 +678,7 @@ int find_shortest_path(const RSGraph& mst, const NodeID start, const NodeID targ
 * @return None
 */
 void weighted_smooth(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     const std::vector<Point>& vertices,
     const std::vector<Vec3>& normals,
     const NeighborMap& neighbors_,
@@ -756,7 +750,7 @@ auto normalize_normals(std::vector<Vec3>& normals) -> void
 }
 
 void estimate_normal_no_normals_memoized(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     const std::vector<Point>& vertices,
     const NeighborMap& neighbors,
     std::vector<Vec3>& normals)
@@ -895,7 +889,7 @@ void minimum_spanning_tree(const SimpGraph& g, NodeID root, SimpGraph& gn)
     * @return None
     */
 void correct_normal_orientation(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     const Tree& kdTree,
     const std::vector<Point>& in_smoothed_v,
     std::vector<Vec3>& normals,
@@ -1036,9 +1030,9 @@ void init_face_loop_label(RSGraph& g)
     *
     * @return projected Vector
     */
-constexpr Vec3 projected_vector(const Vec3& input, const Vec3& normal)
+Vec3d projected_vector(const Vec3& input, const Vec3& normal)
 {
-    Vec3 normal_normed = normal;
+    Vec3d normal_normed = normal;
     normal_normed.normalize();
     return input - CGLA::dot(input, normal_normed) * normal_normed;
 }
@@ -2052,7 +2046,7 @@ auto indices_from(const Collection& collection) -> std::vector<NodeID>
 
 [[nodiscard]]
 auto estimate_normals_and_smooth(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     std::vector<Point>& org_vertices,
     std::vector<Vec3>& org_normals,
     const std::vector<NodeID>& indices,
@@ -2138,7 +2132,7 @@ struct Components {
     */
 [[nodiscard]]
 auto split_components(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     const Tree& kdTree,
     std::vector<Point>&& vertices,
     std::vector<Vec3>&& normals,
@@ -2244,7 +2238,7 @@ auto split_components(
 }
 
 auto component_to_manifold(
-    Util::ThreadPool& pool,
+    Util::Executor& pool,
     const RsROpts& opts,
     const std::vector<Point>&& vertices,
     const std::vector<Vec3>&& normals,
@@ -2368,7 +2362,7 @@ auto point_cloud_to_mesh(
 
     auto vertices_copy = vertices;
     auto normals_copy = normals;
-    Util::ThreadPool pool(15);
+    Util::ImmediatePool pool;
     if (normals.empty()) {
         opts2.normals_included = false;
     } else {
@@ -2438,7 +2432,7 @@ auto point_cloud_to_mesh(
 
 auto point_cloud_collapse(const std::vector<Point>& vertices, std::vector<Vec3>& normals) -> Collapse
 {
-    Util::ThreadPool pool(std::thread::hardware_concurrency());
+    Util::ImmediatePool pool(std::thread::hardware_concurrency());
     auto indices = indices_from(vertices);
     if (normals.empty()) {
         // auto normals_copy = normals;
