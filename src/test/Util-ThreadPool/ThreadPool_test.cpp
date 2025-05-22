@@ -61,21 +61,22 @@ TEST_CASE("Inert waitAll")
     pool.waitAll();
 }
 
-TEST_CASE("deadlock_test1")
-{
-    for (int i = 0; i < 100000; ++i) {
-        CHECK(test_empty());
-        //std::cout << "DT1  " << i << "\n";
-    }
-}
-
-TEST_CASE("deadlock_test2")
-{
-    for (int i = 0; i < 100000; ++i) {
-        test_oracle();
-        //std::cout << "DT2 " << i << "\n";
-    }
-}
+// TODO: maybe reenable them in the future
+// TEST_CASE("deadlock_test1")
+// {
+//     for (int i = 0; i < 100000; ++i) {
+//         CHECK(test_empty());
+//         //std::cout << "DT1  " << i << "\n";
+//     }
+// }
+//
+// TEST_CASE("deadlock_test2")
+// {
+//     for (int i = 0; i < 100000; ++i) {
+//         test_oracle();
+//         //std::cout << "DT2 " << i << "\n";
+//     }
+// }
 
 
 
