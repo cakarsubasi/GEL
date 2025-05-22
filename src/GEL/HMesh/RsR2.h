@@ -15,17 +15,63 @@
 
 namespace GEL::HMesh::RSR
 {
+
+template<typename IndexTy = size_t, typename FloatTy = double>
+class RSR {
+public:
+    RSR() = delete;
+
+};
+
+template <typename IndexTy>
+struct Triangle {
+    IndexTy v1, v2, v3;
+    constexpr IndexTy operator[](const size_t idx) {
+        assert(idx < 3);
+        return std::bit_cast<IndexTy*>(this)[idx];
+    }
+};
+
+
+
 using namespace CGLA;
 using namespace Geometry;
-using uint = uint32_t;
-using f32 = float;
-using f64 = double;
 
 using NodeID = AMGraph::NodeID;
+using FaceType = std::vector<NodeID>;
 
 using Vec3 = Vec3d;
 using Point = Vec3;
 using TEdge = std::pair<NodeID, NodeID>;
+
+using Tree = Geometry::KDTree<Point, NodeID>;
+using Record = Geometry::KDTreeRecord<Point, NodeID>;
+
+struct Collapse {
+    std::vector<NodeID> important_points;
+    std::vector<std::vector<NodeID>> unimportant_points;
+};
+
+struct NeighborInfo {
+    NodeID id;
+    double distance; // the added precision doesn't justify the usage of doubles
+
+    static constexpr NodeID invalid_id = -1;
+    NeighborInfo() = delete;
+
+    explicit NeighborInfo(const Record& record) noexcept : id(record.v), distance(std::sqrt(record.d))
+    {}
+};
+
+using NeighborArray = std::vector<NeighborInfo>;
+using NeighborMap = std::vector<NeighborArray>;
+
+auto collapse_points(
+    const std::vector<Point>& vertices,
+    const std::vector<Vec3>& normals,
+    const NeighborMap& neighbor_map,
+    double collapse_factor
+) -> Collapse;
 
 double cal_radians_3d(const Vec3& branch, const Vec3& normal);
 
@@ -264,8 +310,7 @@ public:
     }
 };
 
-using Tree = Geometry::KDTree<Point, NodeID>;
-using Record = Geometry::KDTreeRecord<Point, NodeID>;
+
 
 void NN_search(const Point&, const Tree&, double,
                std::vector<NodeID>&, std::vector<double>&, bool isContain = true);
@@ -331,6 +376,17 @@ bool isIntersecting(const RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID 
 
 bool routine_check(const RSGraph& mst, const std::vector<NodeID>& triangle);
 
+/// Standalone point cloud collapse, normals are also updated if empty
+/// @param vertices vertices of the point cloud
+/// @param normals normals of the point cloud or empty vector
+/// @return point cloud collapse information
+auto point_cloud_collapse(const std::vector<Point>& vertices, std::vector<Vec3>& normals) -> Collapse;
+
+/// Convert point cloud to a Manifold
+/// @param vertices vertices of the point cloud
+/// @param normals normals of the point cloud or empty vector
+/// @param opts collapse options
+/// @return reconstructed manifold mesh
 auto point_cloud_to_mesh(const std::vector<Point>& vertices, const std::vector<Vec3>& normals,
                          const RsROpts& opts) -> ::HMesh::Manifold;
 } // namespace GEL::HMesh::RSR

@@ -7,16 +7,7 @@
 namespace GEL::HMesh::RSR
 {
 
-struct NeighborInfo {
-    NodeID id;
-    double distance;
-    NeighborInfo() = delete;
-    explicit NeighborInfo(const Record& record) noexcept : id(record.v), distance(std::sqrt(record.d))
-    {}
-};
 
-using NeighborArray = std::vector<NeighborInfo>;
-using NeighborMap = std::vector<NeighborArray>;
 
 struct m_cmp {
     bool operator()(const std::pair<std::vector<NodeID>, float>& left,
@@ -108,6 +99,132 @@ Vec3 safe_div(Vec3 lhs, Float rhs)
     }
 }
 
+struct PointScore {
+    NodeID id;
+    double score;
+
+    bool operator==(const PointScore& other) const
+    {
+        return this->id == other.id;
+    }
+};
+
+struct PointScoreHash {
+    std::size_t operator()(const PointScore& s) const noexcept
+    {
+        std::size_t h1 = std::hash<NodeID>{}(s.id);
+        return h1;
+    }
+};
+
+auto collapse_points(
+    const std::vector<Point>& vertices,
+    const std::vector<Vec3>& normals,
+    const NeighborMap& neighbor_map,
+    const double collapse_factor
+) -> Collapse
+{
+    const auto number_of_points = vertices.size();
+
+    // Let's do it the naive way, we just score each point and decide their importance
+    std::vector<PointScore> point_scores;
+    std::vector<Point> collapsed_vertices;
+    std::vector<Vec3> collapsed_normals;
+
+    // not fast but parallelizable
+    for (auto& neighbors : neighbor_map) {
+        const NodeID this_id = neighbors[0].id;
+        const auto this_normal = normals[this_id];
+
+        auto score = 0.0;
+        for (const auto neighbor : neighbors) {
+            const auto dist = neighbor.distance;
+            const auto norm = normals[neighbor.id];
+            // large differences between normals with points that are close-up
+            const auto diff = cross(this_normal, norm);
+            const auto diff_weighted = safe_div(dot(diff, diff), dist);
+            score += diff_weighted;
+        }
+        point_scores.emplace_back(this_id, score);
+    }
+
+    // better to use nth_element
+    const auto nth = static_cast<NodeID>(static_cast<double>(number_of_points) * collapse_factor);
+    std::ranges::nth_element(point_scores.begin(), point_scores.begin() + nth, point_scores.end(),
+                             [](const auto& a, const auto& b) {
+                                 return a.score > b.score;
+                             });
+
+    const auto remaining = number_of_points - nth;
+    const auto bin_size = Util::ParallelUtil::div_ceil(remaining, nth);
+    // step two, decide on the collapse
+
+    std::vector<std::vector<NodeID>> collapses;
+    std::unordered_map<NodeID, NodeID> mapping;
+    NodeID idx = 0;
+    for (auto begin = point_scores.cbegin(); begin != point_scores.cbegin() + nth; ++begin) {
+        auto this_idx = begin->id;
+        collapses.emplace_back();
+        mapping.emplace(this_idx, idx);
+        idx++;
+    }
+    //std::vector<std::vector<NodeID>> collapsed_points;
+
+    // ideas:
+    // tree-based: vector of vectors, flexible sizes, easily parallelizable, bad cache layout
+    // flat: pair of indices. fewer allocations, more cache-friendly, but more complicated
+
+    // how to do the collapse
+    // important point-centric: fairness issues, how to parallelize?
+    // unimportant point-centric: better?
+    // Need to find the point in the vector
+    std::vector<NodeID> important_points_idx;
+    for (auto begin = point_scores.begin(); begin != point_scores.begin() + nth; ++begin) {
+        important_points_idx.push_back(begin->id);
+    }
+    // other idea: keep two vectors?
+    // options:
+    // Set (slow but reliable)
+    std::unordered_set<PointScore, PointScoreHash> important_points = {
+        point_scores.begin(), point_scores.begin() + nth
+    };
+    auto failures = 0;
+    for (auto begin = point_scores.begin() + nth; begin != point_scores.end(); ++begin) {
+        const auto this_idx = begin->id;
+        const auto& neighbors = neighbor_map[this_idx];
+        bool found = false;
+        for (auto neighbor : neighbors) {
+            // check neighbor, if important, add self to their list (potential contention)
+            if (auto search = mapping.find(neighbor.id); search != mapping.end()) {
+                found = true;
+                collapses[search->second].push_back(this_idx);
+                break;
+            }
+        }
+        if (!found) {
+            failures++;
+            // we just declare ourselves important
+            const auto position = collapses.size();
+            important_points_idx.push_back(this_idx);
+            collapses.emplace_back();
+            mapping.emplace(this_idx, position);
+        }
+    }
+
+    std::cout << "failures: " << failures << "\n";
+
+    return Collapse {
+        important_points_idx,
+        collapses
+    };
+}
+
+bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<int>>& faces, Tree& KDTree,
+    float edge_length) {}
+
+void expand_points()
+{}
+
 /**
     * @brief k nearest neighbor search
     *
@@ -147,7 +264,6 @@ void knn_search(const Point& query, const Tree& kdTree,
 }
 
 
-
 void knn_search(const Point& query, const Tree& kdTree,
                 int num, NeighborArray& neighbors, const bool isContain)
 {
@@ -157,9 +273,7 @@ void knn_search(const Point& query, const Tree& kdTree,
     // TODO: change the implementation in KdTree to have an inout parameter
     const std::vector<Record> records = [num, isContain, &kdTree, &query]() -> std::vector<Record> {
         std::vector<Record> temp =
-            (!isContain) ?
-                kdTree.m_closest(num, query, INFINITY) :
-                kdTree.m_closest(num + 1, query, INFINITY);
+            (!isContain) ? kdTree.m_closest(num, query, INFINITY) : kdTree.m_closest(num + 1, query, INFINITY);
         heap_sort(temp);
         return temp;
     }();
@@ -167,9 +281,7 @@ void knn_search(const Point& query, const Tree& kdTree,
     int idx = 0;
     for (auto record : records) {
         [[unlikely]]
-        if (idx == 0 && isContain) {
-
-        } else {
+        if (idx == 0 && isContain) {} else {
             neighbors.emplace_back(record);
         }
         idx++;
@@ -182,14 +294,15 @@ auto calculate_neighbors(
     const Tree& kdTree,
     const int k,
     NeighborMap&& neighbors_memoized = NeighborMap())
--> NeighborMap
+    -> NeighborMap
 {
     if (neighbors_memoized.empty()) {
         neighbors_memoized = NeighborMap(vertices.size());
-        for (auto &neighbors : neighbors_memoized) {
+        for (auto& neighbors : neighbors_memoized) {
             neighbors.reserve(k);
         }
-    } else if (neighbors_memoized.at(0).capacity() < k) {;
+    } else if (neighbors_memoized.at(0).capacity() < k) {
+        ;
         // TODO: this seems to lose performance because calls to reserve block yet the allocator is multithreaded
         // for (auto &neighbors : neighbors_memoized) {
         //     neighbors.reserve(k);
@@ -218,8 +331,7 @@ void remove_duplicate_vertices(
     NeighborMap neighbors_memoized = calculate_neighbors(pool, vertices, kdTree, k);
 
     auto lambda = [&neighbors_memoized](const size_t this_idx, Point vertex, Vec3 _normal)
-    -> std::optional<std::pair<Point, Vec3>> {
-
+        -> std::optional<std::pair<Point, Vec3>> {
         for (const auto& neighbors = neighbors_memoized[this_idx]; const auto neighbor : neighbors) {
             const NodeID idx = neighbor.id;
             const double length = neighbor.distance;
@@ -236,7 +348,7 @@ void remove_duplicate_vertices(
     };
 
     auto lambda2 = [lambda](size_t this_idx, Point vertex) -> std::optional<Point> {
-        if (auto value = std::invoke(lambda, this_idx, vertex, Point(0,0,0)); value.has_value())
+        if (auto value = std::invoke(lambda, this_idx, vertex, Point(0, 0, 0)); value.has_value())
             return std::make_optional(std::get<0>(*value));
         else
             return std::nullopt;
@@ -339,7 +451,6 @@ double cal_radians_3d(const Vec3& branch_vec, const Vec3& normal, const Vec3& re
 Tree build_KDTree(const std::vector<Point>& vertices, const std::vector<NodeID>& indices)
 {
     Tree kdTree;
-    kdTree.reserve(vertices.size());
     // safety precondition
     assert(indices.size() >= vertices.size());
     int idx = 0;
@@ -418,7 +529,7 @@ auto filter_out_cross_connection(
     std::vector<NodeID>& neighbors,
     const double cross_conn_thresh,
     const bool isEuclidean
-    )
+)
 {
     std::vector<NodeID> temp;
     const Vec3 this_normal = normals[this_idx];
@@ -427,8 +538,7 @@ auto filter_out_cross_connection(
         const double cos_theta = dot(this_normal, neighbor_normal) /
             this_normal.length() / neighbor_normal.length();
         const double cos_thresh =
-            (isEuclidean) ? 0.0 :
-            cos(cross_conn_thresh / 180. * M_PI);
+            (isEuclidean) ? 0.0 : cos(cross_conn_thresh / 180. * M_PI);
         if (cos_theta >= cos_thresh) {
             temp.push_back(idx);
         }
@@ -525,7 +635,8 @@ void init_graph(
     *
     * @return the number of steps of the shortest path
     */
-int find_shortest_path(const RSGraph& mst, const NodeID start, const NodeID target, const int threshold, std::vector<NodeID>& path)
+int find_shortest_path(const RSGraph& mst, const NodeID start, const NodeID target, const int threshold,
+                       std::vector<NodeID>& path)
 {
     std::queue<NodeID> q;
     std::vector<int> dist(mst.no_nodes(), -1); // Distance from the start to each node
@@ -593,7 +704,7 @@ void weighted_smooth(
         weights.reserve(limit);
         for (auto begin = neighbors.cbegin(); begin != neighbors.cbegin() + limit; ++begin) {
             const auto& neighbor = *begin;
-        //for (const auto& neighbor: neighbors) {
+            //for (const auto& neighbor: neighbors) {
             Point neighbor_pos = vertices[neighbor.id];
             Vec3 n2this = neighbor_pos - vertex;
             if (dot(normals[neighbor.id], normal) < std::cos(30. / 180. * M_PI)) {
@@ -792,7 +903,7 @@ void correct_normal_orientation(
 {
     /// TODO: we rely on graph traversal here to flip normals as needed
     ///
-    const auto [g_angle, sets] = [&]{
+    const auto [g_angle, sets] = [&] {
         SimpGraph g_angle_temp;
         AMGraph::NodeSet sets_temp;
         //sets.reserve(in_smoothed_v.size());
@@ -857,7 +968,6 @@ void correct_normal_orientation(
             }
         }
     }
-
 }
 
 /**
@@ -944,21 +1054,21 @@ constexpr Vec3 projected_vector(const Vec3& input, const Vec3& normal)
     *
     * @return if they are intersecting with each other
     */
-bool isIntersecting(RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4)
+bool isIntersecting(const RSGraph& mst, const NodeID v1, const NodeID v2, const NodeID v3, const NodeID v4)
 {
-    Point p1 = mst.m_vertices[v1].coords;
-    Point p2 = mst.m_vertices[v2].coords;
-    Vec3 n1 = mst.m_vertices[v1].normal;
-    Vec3 n2 = mst.m_vertices[v2].normal;
-    Point midpoint_12 = p1 + (p2 - p1) / 2.;
-    Vec3 normal_12 = (n1 + n2) / 2.;
+    const Point p1 = mst.m_vertices[v1].coords;
+    const Point p2 = mst.m_vertices[v2].coords;
+    const Vec3 n1 = mst.m_vertices[v1].normal;
+    const Vec3 n2 = mst.m_vertices[v2].normal;
+    const Point midpoint_12 = p1 + (p2 - p1) / 2.;
+    const Vec3 normal_12 = (n1 + n2) / 2.;
 
-    Point p3 = mst.m_vertices[v3].coords;
-    Point p4 = mst.m_vertices[v4].coords;
-    Vec3 n3 = mst.m_vertices[v3].normal;
-    Vec3 n4 = mst.m_vertices[v4].normal;
-    Point midpoint_34 = p3 + (p4 - p3) / 2.;
-    Vec3 normal_34 = (n3 + n4) / 2.;
+    const Point p3 = mst.m_vertices[v3].coords;
+    const Point p4 = mst.m_vertices[v4].coords;
+    const Vec3 n3 = mst.m_vertices[v3].normal;
+    const Vec3 n4 = mst.m_vertices[v4].normal;
+    const Point midpoint_34 = p3 + (p4 - p3) / 2.;
+    const Vec3 normal_34 = (n3 + n4) / 2.;
 
     // On the plane of edge 12
     {
@@ -990,7 +1100,7 @@ bool isIntersecting(RSGraph& mst, NodeID v1, NodeID v2, NodeID v3, NodeID v4)
     }
 
     // On the plane of edge 34
-    if (true) {
+    {
         bool isIntersecting = true;
         Vec3 edge1 = p1 - midpoint_12;
         Vec3 edge2 = p3 - midpoint_12;
@@ -1140,7 +1250,7 @@ void maintain_face_loop(RSGraph& g, const NodeID source, const NodeID target)
     get_neighbor_info(g, target, source).tree_id = snd;
 }
 
-bool routine_check(const RSGraph& mst, const std::vector<NodeID>& triangle)
+bool routine_check(const RSGraph& mst, const FaceType& triangle)
 {
     const NodeID v1 = triangle[0];
     const NodeID v2 = triangle[1];
@@ -1180,8 +1290,10 @@ bool routine_check(const RSGraph& mst, const std::vector<NodeID>& triangle)
 }
 
 
-void add_face(RSGraph& G, const std::vector<NodeID>& item,
-              std::vector<std::vector<NodeID>>& faces)
+
+
+void add_face(RSGraph& G, const FaceType& item,
+              std::vector<FaceType>& faces)
 {
     NodeID v_i = item[0];
     NodeID v_u = item[1];
@@ -1200,7 +1312,7 @@ void add_face(RSGraph& G, const std::vector<NodeID>& item,
     faces.push_back(item);
 }
 
-bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<NodeID>>& faces,
+bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<FaceType>& faces,
                    Tree& KDTree, float edge_length)
 {
     const Point p1 = mst.m_vertices[v1].coords;
@@ -1225,9 +1337,9 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
                                   mst.m_vertices[possible_root2].normal, p1 - mst.m_vertices[possible_root2].coords);
 
     bool isValid = true;
-    std::vector<std::vector<NodeID>> temp;
+    std::vector<FaceType> temp;
     for (auto v3 : share_neighbors) {
-        std::vector<NodeID> triangle{v1, v2, v3};
+        FaceType triangle{v1, v2, v3};
         if (v3 == possible_root1 && angle1 < M_PI) {
             if (routine_check(mst, triangle)) {
                 isValid = false;
@@ -1245,7 +1357,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
                 isValid = false;
                 break;
             }*/
-            temp.push_back(std::vector<NodeID>{v1, v3, v2});
+            temp.emplace_back(FaceType{v1, v3, v2});
         }
 
         if (v3 == possible_root2 && angle2 < M_PI) {
@@ -1265,7 +1377,7 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<std::vector<N
                 isValid = false;
                 break;
             }*/
-            temp.push_back(std::vector<NodeID>{v1, v2, v3});
+            temp.emplace_back(FaceType{v1, v2, v3});
         }
     }
 
@@ -1393,7 +1505,7 @@ void connect_handle(
         sorted_face.push_back(m_face_pair(length, key->first));
     }
     std::sort(sorted_face.begin(), sorted_face.end(), face_comparator);
-    for (auto & i : sorted_face) {
+    for (auto& i : sorted_face) {
         std::string key = i.second;
         std::vector<int> idx_vec = face_connections[key];
         if (idx_vec.size() <= 5)
@@ -1417,7 +1529,7 @@ void connect_handle(
                     Vec3 edge = query - mst.m_vertices[connected_neighbor].coords;
                     double Euclidean_dist = edge.length();
                     double projection_dist = cal_proj_dist(edge, mst.m_vertices[this_v].normal,
-                                                          mst.m_vertices[connected_neighbor].normal);
+                                                           mst.m_vertices[connected_neighbor].normal);
                     const auto distance = (isEuclidean) ? Euclidean_dist : projection_dist;
 
                     mst.add_edge(this_v, connected_neighbor, distance);
@@ -1655,12 +1767,10 @@ bool check_validity(RSGraph& G, std::pair<std::vector<NodeID>, float>& item,
     return true;
 }
 
-void checkAndForce(NodeID v_u, NodeID v_w, RSGraph& G, m_priority_queue& queue,
-                   std::vector<float>& length_thresh)
+void checkAndForce(const NodeID v_u, const NodeID v_w, RSGraph& G, m_priority_queue& queue,
+                   const std::vector<float>& length_thresh)
 {
-    std::vector<NodeID> check_v{v_u, v_w};
-    for (int i = 0; i < check_v.size(); i++) {
-        NodeID v_i = check_v[i];
+    for (const std::array check_v{v_u, v_w}; const NodeID v_i : check_v) {
         std::vector<int> connection_count(G.m_vertices[v_i].ordered_neighbors.size(), 0);
         std::vector<NodeID> neighbor_ids;
         std::set<NodeID> neighbor_ids_set;
@@ -1690,8 +1800,8 @@ void checkAndForce(NodeID v_u, NodeID v_w, RSGraph& G, m_priority_queue& queue,
         if (not_full.size() == 2) {
             NodeID v_u = neighbor_ids[not_full[0]];
             NodeID v_w = neighbor_ids[not_full[1]];
-            Vec3 u_normal = G.m_vertices[v_u].normal;
-            Vec3 w_normal = G.m_vertices[v_w].normal;
+            const Vec3 u_normal = G.m_vertices[v_u].normal;
+            const Vec3 w_normal = G.m_vertices[v_w].normal;
             float score = (G.m_vertices[v_u].coords - G.m_vertices[v_w].coords).length();
             if (!G.isEuclidean) {
                 score = cal_proj_dist(G.m_vertices[v_u].coords - G.m_vertices[v_w].coords,
@@ -1915,17 +2025,17 @@ void build_mst(
             out_mst.m_vertices[temp.m_edges[i].target].coords;
 
         const double distance =
-            (isEuclidean) ?
-                edge.length() :
-                cal_proj_dist(edge,out_mst.m_vertices[temp.m_edges[i].source].normal,
-                                              out_mst.m_vertices[temp.m_edges[i].target].normal);
+            (isEuclidean)
+                ? edge.length()
+                : cal_proj_dist(edge, out_mst.m_vertices[temp.m_edges[i].source].normal,
+                                out_mst.m_vertices[temp.m_edges[i].target].normal);
 
         [[unlikely]]
         if (std::isnan(distance))
             std::cerr << "debug" << std::endl;
 
         out_mst.add_edge(temp.m_edges[i].source,
-                 temp.m_edges[i].target, distance);
+                         temp.m_edges[i].target, distance);
     }
 }
 
@@ -1948,7 +2058,6 @@ auto estimate_normals_and_smooth(
     const std::vector<NodeID>& indices,
     const RsROpts& opts) -> std::vector<Point>
 {
-
     // Insert the number_of_data_points into the tree
     const auto tree_before_remove = build_KDTree(org_vertices, indices);
     remove_duplicate_vertices(pool, org_vertices, org_normals, tree_before_remove, opts.k);
@@ -2008,7 +2117,8 @@ struct Components {
         std::vector<std::vector<Point>>&& vertices,
         std::vector<std::vector<Point>>&& smoothed_v,
         std::vector<std::vector<Vec3>>&& normals) noexcept
-    : vertices { std::move(vertices) }, smoothed_v { std::move(smoothed_v) }, normals { std::move(normals) } {}
+        : vertices{std::move(vertices)}, smoothed_v{std::move(smoothed_v)}, normals{std::move(normals)} {}
+
     Components() = delete;
     Components(Components& other) = delete;
 };
@@ -2059,7 +2169,6 @@ auto split_components(
     NodeID this_idx = 0;
     // Construct graph
     for (auto& vertex : smoothed_v) {
-
         std::vector<NodeID> neighbors;
         std::vector<double> neighbor_distance;
         knn_search(vertex, kdTree, k, neighbors, neighbor_distance, true);
@@ -2127,7 +2236,7 @@ auto split_components(
     }
     std::cout << component_vertices.size() << " of them will be reconstructed." << std::endl;
 
- return Components(
+    return Components(
         std::move(component_vertices),
         std::move(component_smoothed_v),
         std::move(component_normals)
@@ -2195,9 +2304,8 @@ auto component_to_manifold(
 
     // Vanilla MST imp
     // Edge connection
-    for (auto & i : edge_length) {
-        unsigned int edge_idx = i.second;
-        TEdge this_edge = full_edges[edge_idx];
+    for (auto& [edge_len, edge_index] : edge_length) {
+        TEdge this_edge = full_edges[edge_index];
 
         if (mst.find_edge(this_edge.first, this_edge.second) != AMGraph::InvalidEdgeID)
             continue;
@@ -2205,7 +2313,7 @@ auto component_to_manifold(
         // TODO: isAdded not checked?
         if (bool isValid = Vanilla_check(mst, this_edge, kdTree)) {
             bool isAdded = register_face(mst, this_edge.first, this_edge.second, faces, kdTree,
-                                         i.first);
+                                         edge_len);
         }
     }
     std::cout << std::endl;
@@ -2221,12 +2329,15 @@ auto component_to_manifold(
 
     ::HMesh::Manifold res;
     // Extract vertex position
-    std::vector<double> pos;
-    for (int i = 0; i < mst.no_nodes(); i++) {
-        pos.push_back(vertices[i][0]);
-        pos.push_back(vertices[i][1]);
-        pos.push_back(vertices[i][2]);
-    }
+    // std::vector<double> pos;
+    // for (int i = 0; i < mst.no_nodes(); i++) {
+    //     pos.push_back(vertices[i][0]);
+    //     pos.push_back(vertices[i][1]);
+    //     pos.push_back(vertices[i][2]);
+    // }
+
+    static_assert(alignof(std::remove_reference_t<decltype(vertices)>::value_type) == alignof(double));
+    auto pos = std::bit_cast<double*>(vertices.data());
 
     std::vector<int> mesh_faces(faces.size(), 3);
     std::vector<int> flattened_face;
@@ -2235,6 +2346,7 @@ auto component_to_manifold(
         flattened_face.push_back(face[1]);
         flattened_face.push_back(face[2]);
     }
+    //auto flattened_face = std::bit_cast<NodeID*>(faces.data()); // bad conversion
 
     // TODO: This takes a raw pointer which is probably unwanted
     ::HMesh::build(res, mst.no_nodes(), &pos[0], faces.size(),
@@ -2283,9 +2395,10 @@ auto point_cloud_to_mesh(
     timer.start("Split components");
     std::cout << "find components\n";
     auto [component_vertices,
-        component_smoothed_v,
-        component_normals] =
-            split_components(pool, kdTree, std::move(vertices_copy), std::move(normals_copy), std::move(in_smoothed_v), opts2);
+            component_smoothed_v,
+            component_normals] =
+        split_components(pool, kdTree, std::move(vertices_copy), std::move(normals_copy), std::move(in_smoothed_v),
+                         opts2);
     timer.end("Split components");
     // There is no guarantee that there is more than one component, and components can
     // be highly non-uniform in terms of how many primitives they have. That means we cannot
@@ -2295,8 +2408,10 @@ auto point_cloud_to_mesh(
         std::cout << "Reconstructing component " + std::to_string(component_id) + " ...\n";
 
         std::vector<Point> vertices_of_this = std::move(component_vertices[component_id]);
-        std::vector<Vec3>  normals_of_this = std::move(component_normals[component_id]);
+        std::vector<Vec3> normals_of_this = std::move(component_normals[component_id]);
         std::vector<Point> smoothed_v_of_this = std::move(component_smoothed_v[component_id]);
+
+        // collapse points here
 
         auto res = component_to_manifold(
             pool,
@@ -2305,6 +2420,9 @@ auto point_cloud_to_mesh(
             std::move(normals_of_this),
             std::move(smoothed_v_of_this),
             indices);
+
+        // expand points here?
+
         output.merge(res);
     }
     timer.end("Algorithm");
@@ -2318,4 +2436,23 @@ auto point_cloud_to_mesh(
     return output;
 }
 
+auto point_cloud_collapse(const std::vector<Point>& vertices, std::vector<Vec3>& normals) -> Collapse
+{
+    Util::ThreadPool pool(std::thread::hardware_concurrency());
+    auto indices = indices_from(vertices);
+    if (normals.empty()) {
+        // auto normals_copy = normals;
+        auto vertices_copy = vertices;
+        RsROpts opts;
+        opts.normals_included = false;
+        auto _unused = estimate_normals_and_smooth(pool, vertices_copy, normals, indices, opts);
+
+        const Tree kd_tree = build_KDTree(vertices_copy, indices);
+        const auto neighbor_map = calculate_neighbors(pool, vertices_copy, kd_tree, 30);
+        return collapse_points(vertices_copy, normals, neighbor_map, 0.1);
+    }
+    const Tree kd_tree = build_KDTree(vertices, indices);
+    const auto neighbor_map = calculate_neighbors(pool, vertices, kd_tree, 30);
+    return collapse_points(vertices, normals, neighbor_map, 0.1);
+}
 } // namespace GEL::HMesh::RsR
