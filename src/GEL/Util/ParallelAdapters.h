@@ -32,26 +32,26 @@ namespace Concepts
     template <typename F, typename A, typename R>
     concept UnaryFunction =
         requires(A a, F f)
-        {
-            { std::is_invocable<F, decltype(a)>() };
-            { f(a) } -> std::convertible_to<R>;
-        };
+    {
+        { std::is_invocable<F, decltype(a)>() };
+        { f(a) } -> std::convertible_to<R>;
+    };
 
     template <typename F, typename A, typename B, typename R>
     concept BinaryFunction =
         requires(A a, B b, F f)
-        {
-            { std::is_invocable<F, decltype(a), decltype(b)>() };
-            { f(a, b) } -> std::convertible_to<R>;
-        };
+    {
+        { std::is_invocable<F, decltype(a), decltype(b)>() };
+        { f(a, b) } -> std::convertible_to<R>;
+    };
 
     template <typename F, typename A, typename B, typename C, typename R>
     concept TernaryFunction =
         requires(A a, B b, C c, F f)
-        {
-            { std::is_invocable<F, decltype(a), decltype(b), decltype(c)>() };
-            { f(a, b, c) } -> std::convertible_to<R>;
-        };
+    {
+        { std::is_invocable<F, decltype(a), decltype(b), decltype(c)>() };
+        { f(a, b, c) } -> std::convertible_to<R>;
+    };
 
     static constexpr auto identity = []<typename T0>(T0 x) -> T0 {
         return x;
@@ -147,7 +147,7 @@ template <typename F,
     requires
     ContiguousSizedCollection<InputIt> &&
     UnaryFunction<F, typename InputIt::value_type, void>
-auto parallel_foreach(ThreadPool& pool, F&& f, const InputIt& it) -> void
+auto parallel_foreach(Executor& pool, F&& f, const InputIt& it) -> void
 {
     const auto pool_size = pool.size();
     const auto work_size = it.size();
@@ -187,7 +187,7 @@ template <typename F,
     ContiguousSizedCollection<InputIt1> &&
     ContiguousSizedCollection<InputIt2> &&
     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type, void>
-auto parallel_foreach2(ThreadPool& pool, F&& f, InputIt1& it1, InputIt2& it2) -> void
+auto parallel_foreach2(Executor& pool, F&& f, InputIt1& it1, InputIt2& it2) -> void
 {
     const auto pool_size = pool.size();
     const auto work_size = ParallelUtil::smallest_size(it1, it2);
@@ -227,7 +227,7 @@ template <typename F,
     ContiguousSizedCollection<InputIt1> &&
     ContiguousSizedCollection<InputIt2> &&
     TernaryFunction<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type, void>
-auto parallel_enumerate_foreach2(ThreadPool& pool, F&& f, InputIt1& it1, InputIt2& it2) -> void
+auto parallel_enumerate_foreach2(Executor& pool, F&& f, InputIt1& it1, InputIt2& it2) -> void
 {
     const auto pool_size = pool.size();
     const auto work_size = ParallelUtil::smallest_size(it1, it2);
@@ -270,7 +270,7 @@ template <typename F,
     ContiguousSizedCollection<OutputIt> &&
     UnaryFunction<F, typename InputIt::value_type, typename std::remove_reference_t<OutputIt>::value_type>
 auto parallel_map(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt& it,
     OutputIt&& out = std::vector<std::invoke_result_t<F, typename InputIt::value_type>>()
@@ -323,7 +323,7 @@ template <typename F,
     ContiguousSizedCollection<OutputIt> &&
     BinaryFunction<F, size_t, typename InputIt::value_type, typename std::remove_reference_t<OutputIt>::value_type>
 auto parallel_enumerate_map(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt& it,
     OutputIt&& out = std::vector<std::invoke_result_t<F, size_t, typename InputIt::value_type>>()
@@ -383,7 +383,7 @@ template <typename F,
     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type, typename std::remove_reference_t<
                        OutputIt>::value_type>
 auto parallel_map2(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
@@ -442,7 +442,7 @@ template <typename F,
     TernaryFunction<F, size_t, typename InputIt1::value_type, typename InputIt2::value_type, typename
                     std::remove_reference_t<OutputIt>::value_type>
 auto parallel_enumerate_map2(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
@@ -497,7 +497,7 @@ template <typename F,
     ContiguousSizedCollection<OutputIt> &&
     UnaryFunction<F, typename InputIt::value_type, bool>
 auto parallel_filter(
-    ThreadPool& pool,
+    Executor& pool,
     F&& p,
     const InputIt& it,
     OutputIt&& out = std::vector<typename InputIt::value_type>()
@@ -573,7 +573,7 @@ template <typename F,
     UnaryFunction<F, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
                       OutputIt>::value_type>>
 auto parallel_map_filter(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt& it,
     OutputIt&& out = std::vector<typename std::invoke_result_t<F, typename InputIt::value_type>::value_type>()
@@ -653,7 +653,7 @@ template <typename F,
 //BinaryFunction<F, size_t, typename InputIt::value_type, std::optional<typename std::remove_reference_t<
 //                 OutputIt>::value_type>>
 auto parallel_enumerate_map_filter(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt& it,
     OutputIt&& out = std::vector<typename std::invoke_result_t<F, size_t, typename InputIt::value_type>::value_type>()
@@ -736,7 +736,7 @@ template <typename F,
     BinaryFunction<F, typename InputIt1::value_type, typename InputIt2::value_type, std::optional<typename
                        std::remove_reference_t<OutputIt>::value_type>>
 auto parallel_map2_filter(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
@@ -833,7 +833,7 @@ template <typename F,
                 std::optional<std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename
                                         std::remove_reference_t<OutputIt2>::value_type>>>
 auto parallel_map2_filter2(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,
@@ -944,7 +944,7 @@ template <typename F,
                     std::optional<std::pair<typename std::remove_reference_t<OutputIt1>::value_type, typename
                                             std::remove_reference_t<OutputIt2>::value_type>>>
 auto parallel_enumerate_map2_filter2(
-    ThreadPool& pool,
+    Executor& pool,
     F&& f,
     const InputIt1& it1,
     const InputIt2& it2,

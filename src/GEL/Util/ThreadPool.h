@@ -14,11 +14,59 @@
 
 namespace GEL::Util
 {
+
+class Executor {
+public:
+    virtual ~Executor() = default;
+
+    [[nodiscard]]
+    virtual size_t size() const = 0;
+
+    virtual void addTask(const std::function<void()>&& task) = 0;
+
+    virtual void waitAll() = 0;
+};
+
+class ImmediatePool final : public Executor {
+    using thread_t = std::thread;
+    size_t m_size;
+    std::vector<thread_t> m_threads;
+public:
+    explicit ImmediatePool(const size_t size = std::thread::hardware_concurrency()) : m_size{size} {}
+    ~ImmediatePool() override
+    {
+        waitAll();
+    }
+
+    [[nodiscard]] size_t size() const override
+    {
+        return m_size;
+    }
+
+    void addTask(const std::function<void()>&& task) override
+    {
+        m_threads.emplace_back(task);
+    }
+
+    void waitAll() override
+    {
+        for (auto& thread : m_threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    }
+};
+
+
+/// TODO: fix the remaining race condition that seem to only trigger on ARM
+/// TODO: maybe just use std::thread since we don't even rely on jthread
+
 /// Apple Clang does not support jthread without an additional argument
 /// We don't rely meaningfully on jthread, so a C+11 thread fallback is included
 
 /// @brief a non-generic threadpool implementation
-class ThreadPool {
+class ThreadPool final : public Executor {
 #if defined(__APPLE__)
     using thread_t = std::thread;
 #else
@@ -95,7 +143,7 @@ public:
         }
     }
 
-    ~ThreadPool()
+    ~ThreadPool() override
     {
         this->cancelAll();
         for (auto& thread : m_threads) {
@@ -107,7 +155,7 @@ public:
 
     /// @brief number of threads
     /// @return number of threads
-    [[nodiscard]] size_t size() const
+    [[nodiscard]] size_t size() const override
     {
         return m_threads.size();
     }
@@ -115,7 +163,7 @@ public:
     /// @brief Adds a task to the queue
     /// @param task task to be executed
     /// @return the thread id
-    void addTask(const std::function<void()>&& task)
+    void addTask(const std::function<void()>&& task) override
     {
         m_number_working.fetch_add(1);
         {
@@ -126,7 +174,7 @@ public:
     }
 
     /// @brief Waits until all threads have finished
-    void waitAll()
+    void waitAll() override
     {
         while (m_number_working.load() != 0)
             m_number_working_condition.acquire();
@@ -146,6 +194,28 @@ public:
         m_should_stop.store(true);
 #endif
         m_queue_semaphore.release(static_cast<long>(this->size()));
+    }
+};
+
+/// A facade of ThreadPool for trivially running parallel algorithms in one thread
+class DummyPool final : public Executor
+{
+    DummyPool() = default;
+
+    [[nodiscard]]
+    size_t size() const override
+    {
+        return 1;
+    }
+
+    void addTask(const std::function<void()>&& task) override
+    {
+        task();
+    }
+
+    void waitAll() override
+    {
+
     }
 };
 
