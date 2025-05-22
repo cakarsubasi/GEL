@@ -58,6 +58,8 @@ struct RawObj {
 };
 
 RawObj read_raw_obj(const std::string& file_path);
+
+void write_raw_obj(const std::string& file_path, const RawObj& obj);
 }
 
 #endif //RAWOBJ_H

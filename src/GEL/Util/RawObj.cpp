@@ -154,4 +154,11 @@ RawObj read_raw_obj(const std::string& file_path) {
     file >> obj;
     return obj;
 }
+
+void write_raw_obj(const std::string& file_path, const RawObj& obj)
+{
+    std::ofstream file(file_path);
+    file << obj;
+    file.close();
+}
 }
