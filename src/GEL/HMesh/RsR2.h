@@ -16,21 +16,21 @@
 namespace GEL::HMesh::RSR
 {
 
-template<typename IndexTy = size_t, typename FloatTy = double>
-class RSR {
-public:
-    RSR() = delete;
-
-};
-
-template <typename IndexTy>
-struct Triangle {
-    IndexTy v1, v2, v3;
-    constexpr IndexTy operator[](const size_t idx) {
-        assert(idx < 3);
-        return std::bit_cast<IndexTy*>(this)[idx];
-    }
-};
+// template<typename IndexTy = size_t, typename FloatTy = double>
+// class RSR {
+// public:
+//     RSR() = delete;
+//
+// };
+//
+// template <typename IndexTy>
+// struct Triangle {
+//     IndexTy v1, v2, v3;
+//     constexpr IndexTy operator[](const size_t idx) {
+//         assert(idx < 3);
+//         return std::bit_cast<IndexTy*>(this)[idx];
+//     }
+// };
 
 
 
@@ -361,7 +361,7 @@ const Neighbor& get_neighbor_info(const RSGraph& g, const NodeID& root, const No
 
 // Utils
 
-void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& share_neighbor, RSGraph& g);
+void find_common_neighbor(NodeID neighbor, NodeID root, std::vector<NodeID>& shared_neighbors, const RSGraph& g);
 
 // Algorithm
 

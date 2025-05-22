@@ -56,7 +56,6 @@ constexpr T queue_pop_front(std::priority_queue<T, Container, Comparator>& queue
     T front = std::move(queue.top());
     queue.pop();
     return front;
-
 }
 
 template <typename T>
@@ -65,7 +64,6 @@ constexpr T queue_pop_front(std::queue<T>& queue)
     T front = std::move(queue.front());
     queue.pop();
     return front;
-
 }
 
 /// Erases an element and moves the last element in the vector in its place
@@ -146,7 +144,7 @@ auto collapse_points(
             const auto diff_weighted = safe_div(dot(diff, diff), dist);
             score += diff_weighted;
         }
-        point_scores.emplace_back(PointScore(this_id, score));
+        point_scores.emplace_back(PointScore {this_id, score});
     }
 
     // better to use nth_element
@@ -1198,20 +1196,26 @@ bool Vanilla_check(RSGraph& mst, const TEdge& candidate, const Tree& kdTree)
     *
     * @param neighbor: one vertex
     * @param root: the other vertex
-    * @param share_neighbor: [OUT] common neighbors these two vertices share
+    * @param shared_neighbors: [OUT] common neighbors these two vertices share
     * @param g: tcurrent graph
     *
     * @return reference to last neighbor struct
     */
-void find_common_neighbor(const NodeID neighbor, const NodeID root,
-                          std::vector<NodeID>& share_neighbor, RSGraph& g)
+void find_common_neighbor(
+    const NodeID neighbor,
+    const NodeID root,
+    std::vector<NodeID>& shared_neighbors,
+    const RSGraph& g)
 {
-    auto adj = g.neighbors(neighbor);
-    std::set<NodeID> neighbor_neighbor(adj.begin(), adj.end());
-    adj = g.neighbors(root);
-    std::set<NodeID> vertex_neighbor(adj.begin(), adj.end());
-    std::ranges::set_intersection(vertex_neighbor, neighbor_neighbor,
-                                  std::back_inserter(share_neighbor));
+    shared_neighbors = g.neighbors(neighbor);
+    std::unordered_set neighbor_neighbor(shared_neighbors.begin(), shared_neighbors.end());
+
+    shared_neighbors = g.neighbors(root);
+    std::unordered_set vertex_neighbor(shared_neighbors.begin(), shared_neighbors.end());
+
+    shared_neighbors.clear();
+
+    std::ranges::set_intersection(vertex_neighbor, neighbor_neighbor, std::back_inserter(shared_neighbors));
 }
 
 /**
@@ -1314,10 +1318,12 @@ bool register_face(RSGraph& mst, NodeID v1, NodeID v2, std::vector<FaceType>& fa
 
     const auto possible_root1 = predecessor(mst, v1, v2).v;
     const auto angle1 = cal_radians_3d(p1 - mst.m_vertices[possible_root1].coords,
-                                  mst.m_vertices[possible_root1].normal, p2 - mst.m_vertices[possible_root1].coords);
+                                       mst.m_vertices[possible_root1].normal,
+                                       p2 - mst.m_vertices[possible_root1].coords);
     const auto possible_root2 = predecessor(mst, v2, v1).v;
     const auto angle2 = cal_radians_3d(p2 - mst.m_vertices[possible_root2].coords,
-                                  mst.m_vertices[possible_root2].normal, p1 - mst.m_vertices[possible_root2].coords);
+                                       mst.m_vertices[possible_root2].normal,
+                                       p1 - mst.m_vertices[possible_root2].coords);
 
     bool isValid = true;
     std::vector<FaceType> temp;
@@ -1795,7 +1801,8 @@ void triangulate(
     }
 
     for (unsigned long i : connected_handle_root) {
-        bool result = explore(G, i, queue, length_thresh);
+        //bool result =
+            explore(G, i, queue, length_thresh);
         to_visit.erase(i);
     }
 
