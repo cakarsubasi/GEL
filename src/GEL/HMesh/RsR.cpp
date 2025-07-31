@@ -328,29 +328,29 @@ float find_components(std::vector<Point>& vertices,
         last_v = vertex;
 
         // Filter out cross connection
-        {
-            std::vector<NodeID> temp;
-            Vector this_normal = normals[this_idx];
-            for (int j = 0; j < neighbors.size(); j++) {
-                int idx = neighbors[j];
-                Vector neighbor_normal = normals[idx];
-                float cos_theta = dot(this_normal, neighbor_normal) /
-                    this_normal.length() / neighbor_normal.length();
-                float cos_thresh = std::cos(cross_conn_thresh / 180. * M_PI);
-                if (isEuclidean)
-                    cos_thresh = 0.;
-                if (cos_theta >= cos_thresh) {
-                    temp.push_back(idx);
-                }
-            }
-            if (temp.size() == 0) {
-                neighbors.clear();
-            }
-            else {
-                neighbors.clear();
-                neighbors = temp;
-            }
-        }
+        // {
+        //     std::vector<NodeID> temp;
+        //     Vector this_normal = normals[this_idx];
+        //     for (int j = 0; j < neighbors.size(); j++) {
+        //         int idx = neighbors[j];
+        //         Vector neighbor_normal = normals[idx];
+        //         float cos_theta = dot(this_normal, neighbor_normal) /
+        //             this_normal.length() / neighbor_normal.length();
+        //         float cos_thresh = std::cos(cross_conn_thresh / 180. * M_PI);
+        //         if (isEuclidean)
+        //             cos_thresh = 0.;
+        //         if (cos_theta >= cos_thresh) {
+        //             temp.push_back(idx);
+        //         }
+        //     }
+        //     if (temp.size() == 0) {
+        //         neighbors.clear();
+        //     }
+        //     else {
+        //         neighbors.clear();
+        //         neighbors = temp;
+        //     }
+        // }
 
         for (int i = 0; i < neighbors.size(); i++) {
             NodeID idx = neighbors[i];
@@ -991,6 +991,7 @@ void correct_normal_orientation(std::vector<Point>& in_smoothed_v,
 const Neighbor& successor(const RSGraph& g, const NodeID& root, const NodeID& branch) {
     const auto& u = g.m_vertices.at(root);
     const auto& v = g.m_vertices.at(branch);
+    GEL_ASSERT(!u.ordered_neighbors.empty());
     auto iter = u.ordered_neighbors.upper_bound(Neighbor(u, v, branch));
     if (iter == u.ordered_neighbors.end()) iter = u.ordered_neighbors.begin(); // Wrap around
     return (*iter); // This is honestly not good practice - ONLY modification of tree_id
@@ -1008,6 +1009,7 @@ const Neighbor& successor(const RSGraph& g, const NodeID& root, const NodeID& br
 const Neighbor& predecessor(const RSGraph& g, const NodeID& root, const NodeID& branch) {
     const auto& u = g.m_vertices.at(root);
     const auto& v = g.m_vertices.at(branch);
+    GEL_ASSERT(!u.ordered_neighbors.empty());
     auto iter = u.ordered_neighbors.lower_bound({ u,v,static_cast<uint>(branch) });
     if (iter == u.ordered_neighbors.begin()) iter = u.ordered_neighbors.end(); // Wrap around
     return (*(std::prev(iter)));
